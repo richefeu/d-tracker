@@ -1,0 +1,29 @@
+! The path to the image file (without spaces)
+image_name JCISD1_13-06-14_0015.tif
+
+! Minimum and maximum radii in pixel-units
+Rmin  14
+Rmax  168
+
+! Number of smothing passes
+nsmooth  2
+
+! Coordinates of the four corners
+! T=top, B=bottom, L=left, R=right 
+zone.xTL  578
+zone.yTL  1453
+zone.xTR  7260
+zone.yTR  1510
+zone.xBR  7255
+zone.yBR  7070
+zone.xBL  568
+zone.yBL  7043
+
+! Radius of the rounded parts in the corners of 1g2e frame
+zone.Rcorners  231
+
+! Gray level threshold for the segmentation.
+! To find it in histo.txt, this should correspond to the start of the right 'peak'
+! that is the peak of grain's gray levels 
+threshold  14000
+	

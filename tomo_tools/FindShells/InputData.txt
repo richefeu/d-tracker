@@ -1,0 +1,32 @@
+! filename.raw = 
+!   The scan that has been thresholded and compressed in a raw binary format
+! filename.txt = 
+!   The file with identified shell-positions
+filename 3Dscan-compr
+
+! Shell sizes
+shells.r_out  75
+shells.r_in   65
+shells.h      150
+nbAngle       18
+nbH           20
+
+halfGridStep  80
+blockDivNum   3
+MaxNbTargets  2000000
+
+insideRate 0.5
+matchScore  0.99
+
+! Zone Of Interest (cylindre) z0 < z1
+zone.x0     722
+zone.y0     704
+zone.z0     10
+zone.x1     694
+zone.y1     726
+zone.z1     1280
+zone.R0     649
+zone.R1     645
+
+delta       50  ! initial move (in pixels) for minization
+

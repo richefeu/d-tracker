@@ -1,0 +1,389 @@
+\documentclass{simpledoc}
+
+
+\newcommand{\soft}{\textsc{Tracker} }
+\newcommand{\var}[1]{\color{myblue}$\langle$#1$\rangle$}
+\newcommand{\opt}[1]{\color{myblue}$[$#1$]$}
+\newcommand{\file}[1]{\textit{\color{myblue}#1}}
+\newcommand{\screen}[1]{\texttt{\color{myblue}#1}}
+\newcommand{\scr}[1]{\texttt{\color{myblue}#1}}
+\newcommand{\key}[1]{\fbox{\color{myblue}#1}}
+
+\title{\textsc{Tracker} -- Documentation}
+\author{
+\textbf{Vincent Richefeu} $\langle$Vincent.Richefeu@3sr-grenoble.fr$\rangle$\\
+\textbf{Gael Combe} $\langle$Gael.Combe@3sr-grenoble.fr$\rangle$\\
+Lab. 3SR, University of Grenoble, France
+}
+
+\pagestyle{myfootings}
+\markboth{Tracker, user guide}%
+         {Tracker, user guide}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document describes how to use the code \soft dedicated to digital image correlation (DIC).
+\end{abstract}
+
+\tableofcontents
+
+\newpage
+
+\section{Introduction}
+
+\soft is a soft dedicated to 2D digital image correlation (DIC). It is written with C++ language and should easily be compiled on any operating system (linux, Windows or Mac OS X).
+\soft\! requires the library \screen{libraw} to read raw images, and the library \screen{ImageMagick} (to read tiff, png, bmp, and so on) can be used or not. The compilation consists  simply to type \screen{make} in the source folder. 
+
+\attention
+{\color{red} This code is \textit{not} free. It is designed for academic researches only.}
+
+%\section{Notations used}
+
+%The document uses the conventions listed below:
+
+%\begin{itemize}
+
+%\item \screen{text that appear on the screen (Tele Type)}
+
+%\item \key{key}
+
+%\item \file{file name}
+
+%\item \textnormal{text of the document (Times)}
+
+%\item \var{var} : variable (to replace by a value)
+
+%\item \opt{opt} : optional information
+
+%\item Symbol \$ : prompt
+
+%\end{itemize}
+
+
+
+ 
+
+%\section {Commands}
+
+%To make a DIC, \soft must be launched with the following commands:
+%\begin{verbatim}
+%$ tracker <data_file_name>
+%\end{verbatim}
+
+%The data file is a ASCII file which contain the needed parameters for the DIC to be performed. These parameters are given in the following form: \texttt{keyword [parameters]}.
+%Here is a description of the recognized keywords with the associated parameters:  
+
+%file_names         IMAGES/OACISDG1_20100212-%04d.TIF
+%origin             IMAGES/few.txt masscenters_plus6.txt
+%num_ini            1
+%num_fin            6
+%num_step           1
+%num_raz            2
+%id_up_left         0
+%id_up_right        1 
+%id_down_left       2
+%id_down_right      3
+%RZ_right           10
+%RZ_left	           5
+%RZ_up              5
+%RZ_down            3
+%circular_thumbnail 5
+%make_images        0
+
+
+
+%\marginlabel{\screen{file\_names} \var{\file{FileNames}}}
+%Specify the image file names in a c-style format\\
+%(e.g. \texttt{file\_names  IMAGES/OACISDG1\_20100212-\%04d.TIF}).
+
+%\marginlabel{\screen{origin} \var{\file{FileName}}}
+%Specify the text file that contain the positions of tracked points (or positions and radii of tracker rods, to be defined and fixed). 
+
+%\marginlabel{\screen{num\_ini} \var{n}}
+%Set the initial number of image file. 
+
+%\marginlabel{\screen{num\_fin} \var{n}}
+%Set the final number of image file.
+
+%\marginlabel{\screen{step\_im} \var{n}} 
+%Set the step between each image to be processed.
+
+%\marginlabel{\screen{step\_ref} \var{n}}
+%Set the periodicity of resetting the reference position for the correlation. 
+
+%\marginlabel{\screen{RZ\_<where>} \var{n}}
+%Set the research zone extend (with only positive values).
+%\screen{where} can be one of these keyword : right, left, up, down.
+
+%\marginlabel{\screen{subpixel} \var{flag}} 
+%Subpixel resolution is activated if flag is set to 1.
+
+
+
+
+%\section{Introduction}
+
+
+\section{The Particle Image Tracking procedure}
+
+\subsection{Input}
+
+\marginlabel{\scr{grains\_to\_follow}} (string)\scr{filename}
+
+where \scr{filename} is the name of the input file.
+The format of the input (ascii) file is simply the number of point to be tracked, followed by their respective position (\scr{x}, \scr{y}) and radius \scr{r} (both in pixels) on the reference image (usually the first one).
+If for example we want to follow 3 rods of radius 2, 5 and 8 at the respective positions (4,7), (12,15), (32,24) on the reference image, it will give:
+\begin{verbatim}
+3
+4   7   2 
+12  15  5
+32  24  8
+\end{verbatim}
+
+\attention the $y$ axis is defined from top to bottom of the image.
+By convention we assign to the fixed points a radius equal to 2, and the corners have a radius equal to 1.
+This allows for the post-processing to distinguish those particular points to the sample elements in the output file (see Section~\ref{sec:postpro} for the post-processing calculations)
+
+\marginlabel{\screen{restart\_file}} (string)\scr{filename}
+
+where \scr{filename} is the name an output file used as an input file. The format of this file is given in Section~\ref{sec:output}.
+
+
+\marginlabel{\screen{image\_name}} (string)\scr{filename-format}
+
+It is the path to the image files. The filename format should be written as in C language.
+For example, we can have : \\
+\texttt{image\_name /path/to/imageName\%04d.tif} \\
+which means that the images are in \texttt{/path/to} folder and have all the name of the form:\\
+ \texttt{imageName0001.tif}, \texttt{imageName0002.tif}, \texttt{imageName0003.tif}...
+
+%%%
+\subsection{Multi-threading}
+
+The program uses multi-threading to get faster. Basically, the job is shared by \textit{n} threads with an optimum value that depends on the computer used. 
+  
+\marginlabel{\screen{wanted\_num\_thread}} (integer)\scr{number}
+
+Set the number of threads to be used.
+
+
+%%%
+\subsection{Image flow}
+
+A series of 4 parameters controls how the images to be processed are read.
+
+\marginlabel{\screen{iref}}  (integer)\scr{number}
+
+Number of the reference image. The reference image is the image from which the computer will calculate the displacement (and rotation). Comparing all the time to the same image allows to avoid an addition of roundoff error that would appear when changing the reference. 
+
+\marginlabel{\screen{ibeg}}  (integer)\scr{number}
+
+Number of the image from which we start to calculate the displacement (and rotation). This number can be different from the number of the reference image for in the case where we want to analyze the data in 2 series. after having done the half, we want to analyze only the second half and then \scr{ibeg} would be different from \scr{iref}.
+
+\marginlabel{\screen{iinc}}  (integer)\scr{number}
+
+Increment between the numbers of images processed/analyzed. It is usually set to one, however if for any reason you don't want to analyze every image but only one over 5, setting it to 5 will analyze image number 1, 6, 11, 16 ,21 and so on. 
+
+\marginlabel{\screen{iraz}}  (integer)\scr{number}
+
+Do not use this feature (pending development). Juste set it to a big number.
+
+
+%%%
+\subsection{Image generation for control}
+
+With the data from correlation, it is possible to generate pgm images. They allow to check visually if the correlation is good. 
+
+\marginlabel{\screen{make\_images}} [\scr{1} or \scr{0}]
+
+Enable (1) or disable (0) the generation of check-images.
+
+\marginlabel{\screen{image\_div}} (integer)number  
+
+The dimensions (width and height) of the images created corresponds to the original dimensions divided by this number. When you are dealing with a lot of images that are heavy, the fact to create a new image with the displacement on it at each iteration can slow down significantly the program. A way to slow it down less is to consider an image with a lower size. Example:
+``\texttt{image\_div  2}''  would give images with half the original dimensions and thus a quarter in number of pixels.
+
+%\marginlabel{\screen{draw\_angle}}  function to draw the rotation or not. 1 = draw the rotation , 0 = doesn't draw the rotation.
+
+%\marginlabel{\screen{draw\_disp}}   function to draw the displacement or not. 1 = draw the displacement , 0 = doesn't draw the displacement. (Not implemented for now)
+
+%\marginlabel{\screen{draw\_rescued}} function to change the color of the grain (of the pattern more precisely) if rescue or super rescue have been apply to localised it. The grain color will be green if the rescue function succeed or red if it failed. 1 = activate the function, 0 desactivate the function.
+
+
+
+%%%
+\subsection{Search zone, rescue and super-rescue} 
+
+
+The program is working as follow, we define region around the center of the particle and look for the best correlation of the region considered in the new image within a search zone taking also into account the rotation. If the correlation coefficient is not high enough (\scr{NC\_min}, define by the user), then the program (if activated) use rescue or super rescue function which extended more and more the search zone in order to find the displacement of the particle.
+
+
+
+\marginlabel{\screen{rescue\_level}} [\scr{0} or \scr{1} or \scr{2}]
+
+It is here that we say if we want to activate no rescue (0), or rescue (1), or rescue and super rescue (2). Putting it to 2 allows to have less errors.
+
+
+
+Search zone for the first attempt, the second (rescue) and the third (super rescue), without sub-pixel : For every attempt we define how much we vary the different parameters to look for the best correlation coefficient. This has to be done in term of pixel. To evaluate what you should put, the best is to take the first and the last picture and evaluate more or less from how many pixel it is moving from one picture to the other. For the rotation of the grain it is harder to evaluate but put a value that seems reasonable for the test.
+The program look for the correlation coefficient in a search zone which is define by the left, right, up and down maximal displacement in pixel we are looking for.
+
+
+\marginlabel{\screen{search\_zone.left}} Length in pixel which correspond to the distance until when we are looking on the left side.
+
+\marginlabel{\screen{search\_zone.right}} Length in pixel which correspond to the distance until when we are looking on the right side.
+
+\marginlabel{\screen{search\_zone.up}} Length in pixel which correspond to the distance until when we are looking on the up side.
+
+\marginlabel{\screen{search\_zone.down}} Length in pixel which correspond to the distance until when we are looking on the down side.
+
+
+When we look for the best correlation coefficient in the search zone, at each step, the program is also trying to see if a rotation has occurs, for that it consider a value and a number of increment of rotation.
+
+
+\marginlabel{\screen{search\_zone.inc\_rot}} Value of the rotation of one increment in radians. This should be carefully defined: as the program is not at that point taking into account subpixel displacement, the minimum rotation should correspond to at least a displacement of 1 pixel of the point from the pattern define previously which is the further from the center.
+
+\marginlabel{\screen{search\_zone.num\_rot}} Number of increment of rotation we look for.  This should be taken considering the rotation grains are experiencing between 2 images.
+
+
+This has be defined in the case of the first attempt to look for the best correlation, it means only few pixel around. However, in some case (jump of the grain), the displacement can be superior and so we use rescue and super rescue function.
+This functions are activated if the maximum value of the normalized correlation coefficient (so the value is between 0 and 1) is considered as too low by the user. This is define in NCC\_min : 
+
+
+\marginlabel{\screen{NCC\_min}} Minimum value of the maximum correlation coefficient from the first attempt, under which the rescue function is activated.
+
+\marginlabel{\screen{NCC\_min\_super}} Minimum value of the maximum correlation coefficient from the second attempt (rescue), under which the super rescue function is activated.
+
+
+For each of the function (rescue and super rescue), the search zone in term of displacement and rotation has also to be defined. It is exactly the same principle as the first attempt, however, the search zone should be bigger and bigger for rescue and super rescue in order to have more chance to catch the right displacement of the grain. 
+If the maximum correlation coefficient is still not at the value expected, the program prints "super rescue fail" but take into account the highest correlation coefficient it found, in order to calculate a value of the displacement of this particle.
+
+%%%
+\subsection{Shape of the pattern to be correlated}
+
+The program use a pattern around each point we want to track to correlate 2 images. The shape of the pattern can be defined as follows :
+
+\marginlabel{\screen{pattern rect} \var{dx} \var{dy} } Take a rectangular pattern center around the point we want to follow. Define the size of the rectangle by writing after this instruction the half size of the rectangle in pixel (integers value) in the $x$ and $y$ direction respectively. For example: \screen{pattern  rect  5 10}  will give a rectangular pattern of dimension $11 \times 21$, that is  (2.\screen{dx}+1)$\times$(2.\screen{dy}+1) because we need odd number so that it is centered around the point considered. 
+
+\marginlabel{\screen{pattern circ} \var{R}} Take a circular pattern, i.e. a disk around the point considered of radius \screen{R} (integer in pixel). Example: \screen{pattern circ  20}. 
+
+\marginlabel{\screen{pattern ring} \var{Rin} \var{Rout}} Take a ring pattern, i.e. a ring around the point considered as pattern to follow. Example:  \screen{pattern ring 15 20}, both integers in pixel, rinf and rsup are the radii which define the ring which is between radius rinf and rsup.
+
+\marginlabel{\screen{pattern file} \var{MyFile}} It is also possible to define a special pattern we want to follow by editing a file. To activate this feature, the writting is : pattern  file  directory/nameofthefile.  (what about the file, how is it constructed? voir program)
+
+
+
+%%%
+\subsection{Subpixel resolution of displacements} 
+
+A subpixel refinement can be applied to the displacement, and consist in interpolating the image between the pixel by fitting the grey level of the image with, in our case, a spleen bicubic function. This allow to look for the correlation coefficient at the subpixel scale and by minimizing (1 - correlation coefficient) with Powell method we get the subpixel displacement.
+
+
+
+\marginlabel{\screen{subpixel} \var{$0 \mid 1$}} 0 for no subpixel correction, another figure (1 for example) for activation of the subpixel refinement. 
+
+\marginlabel{\screen{interp\_half\_refsize}} Zone of the image which is interpolated.
+
+\marginlabel{\screen{interp\_mask\_size}} For the subpixel refinement, we redefine a mask size, that is the size of the region around the center of the particle which we are going to look for in the next image. It is usually smaller than the normal mask size.
+
+\marginlabel{\screen{subpix\_niter}} number of iteration for the powell minimization method.
+
+\marginlabel{\screen{subpix\_tol}} tolerance for the powell minimization method.
+
+\marginlabel{\screen{initial\_direction\_dx}, \screen{initial\_direction\_dy}, \screen{initial\_rotation\_dr}} In the Powell method we need to do a first guess, This three are the guess in x, y direction and for the rotation.This guess should be small enough to find the global minimum and not the local one. Can influence the result of the subpixel refinement.  
+ 
+\marginlabel{\screen{rotation}} take into account the rotation (1) or not (0) during the subpixel refinement. 
+
+
+
+%%%
+\subsection{Output} \label{sec:output}
+
+The files resulting from the particle image tracking procedure are named 'dic\_out\_xxx.txt', where xxx is the number of the ???
+This so-called 'dic files' are actually ASCII files with a simple format.
+The first value \screen{n} corresponds to the number of tracked points, and for each point we've got:
+\begin {enumerate}
+\item \screen{refcoord\_xpix} (todo: add description)
+\item \screen{refcoord\_ypix} 
+\item \screen{refrot} 
+\item \screen{radius\_pix}
+\item \screen{dx}
+\item \screen{dy}  
+\item \screen{drot}
+\item \screen{upix}
+\item \screen{vpix} 
+\item \screen{rot\_inc} 
+\item \screen{NCC}
+\item \screen{NCC\_rescue}
+\item \screen{NCC\_subpix}
+\end{enumerate}
+
+\section {Synthetic image generation}
+
+Invoque \soft with the '\texttt{-g}' option. You will then be asked to enter some requested data. A series of images is generated by means of the Perlin Noise algorithm. The parameters that control the pattern are \screen{octave} (an integer value), \screen{persistence} and \screen{zoom} (both real values). 
+
+
+\section{Correction of distortion}
+
+There are two methods to correct the distortion: the \textit{grid method} and the \textit{displacement method}.
+Both methods try to minimize an error function that parametrizes an undistortion. This undistortion is as follows:
+%
+\begin{eqnarray}
+x_d & = & x_u ... \\
+y_d & = & y_u ... \\
+\end{eqnarray}
+
+...
+
+
+With the grid method, the principle is to find the distortion parameters so that the horizontal lines are parallel (and really horizontal), and the vertical lines are parallel (and really vertical). Practically, a photograph of a regular grid is shot and the positions of the line intersections are set manually (by using imagej for example). The Figure xx shows how these intersection points must be ordered (from top-left to bottom-right).
+
+\begin{figure}[htbp]
+   \centering
+   \includegraphics[width=0.9\textwidth]{GridPointsDistortion.png} % requires the graphicx package
+   \caption{example caption}
+   \label{fig:example}
+\end{figure}
+
+
+
+\begin{figure}[htbp]
+   \centering
+   \includegraphics[width=0.49\textwidth]{Grid2.png} % requires the graphicx package
+   \includegraphics[width=0.49\textwidth]{undistoGrid.png} % requires the graphicx package
+   \caption{example caption}
+   \label{fig:example}
+\end{figure}
+
+
+[TO BE CONTINUED]
+
+\section{Subpixel definition of particle centers}
+
+[TODO]
+
+\section{Characterization of speckle patterns}
+
+[TODO]
+
+\section{Processing tools specific to $1\gamma2\varepsilon$ device} \label{sec:postpro}
+
+The folder \scr{1g2e\_tools} includes a number of tools, written either in Fortran or C++, dedicated to the post-processing of photographs of the tests with  $1\gamma2\varepsilon$ device. These tools are listed and described below.  
+
+
+
+What we call post-processing consists basically to the following steps: 
+\begin{enumerate}
+\item apply the distortion parameters to correct the pixel positions (the correction of rotations is not yet implemented), 
+\item set the origin of coordinates at the first fixe-point, the frame being with y-axis  pointing upwards, 
+\item rescale the positions according to a known length in the image, 
+\item compute some global data such as the strain tensor, the mean value of ZNCC, etc.
+\item synchronize some data from the device sensors (stress tensor...) with each configuration.
+\end{enumerate}
+
+\end{document}

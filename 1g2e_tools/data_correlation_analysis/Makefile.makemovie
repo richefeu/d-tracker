@@ -1,0 +1,18 @@
+APP = MakeFluctuationMovie
+LIB = BilinearInterpol
+
+# At least g77 OR gfortran must be installed!
+CC = $(shell if [ `which g77` ]; then echo "g77"; else  echo "gfortran"; fi)
+
+
+SOURCES = $(APP).f
+
+all: $(APP)
+
+$(APP) : $(SOURCES) Makefile
+	$(CC) -c $(LIB).f  $(APP).f
+	$(CC) -o $(APP).e $(APP).o $(LIB).o -lpgplot 
+
+clean:
+	rm -f $(APP).e 
+

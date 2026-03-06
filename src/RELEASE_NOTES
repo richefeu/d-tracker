@@ -1,0 +1,86 @@
+CO-AUTHORS
+==========
+
+Vincent.Richefeu@3sr-grenoble.fr
+Gael.Combe@3sr-grenoble.fr
+
+FEATURES
+========
+
+- DIC with subpixel resolution (bilinear, bicubic or biquintic interpolations)
+- Particle Image Tracking (specific solutions to avoid loosing any particle)
+- synthetic image generation (Perlin noise)
+- correction of distortion (and solutions for the correction of parallax)
+- subpixel positionning of disc centers
+- Pattern characterisation
+
+
+THIRD PARTY LIBRARIES (MANDATORY)
+=================================
+Tracker uses Magick++ and libRaw as third party library.
+To install Magick++, simply install ImageMagick with the solution of your choice. This way, Magick++ will be installed with all re required tools.
+To install libRaw, unpack the sources provided in the folder 'ThirdParty'. The compilation procedure is a simple './configure' followed by 'sudo make install'. 
+
+COMPILATION
+===========
+It is as simple as a 'make' in the folder 'src' (provided that the third party libraries are correctly installed)
+
+
+RELEASE NOTES (in French)
+=============
+
+* VERSION 0.2.0 -> 0.2.1 (Gael, 15/01/2011)
+	+ Les parties entieres de grain[igrain] sont maintenant calculee arrondies (anint en f77).
+
+* VERSION 0.2.1 -> 0.2.2 (Gael, 16/01/2011)
+	+ Utilisation de la liste des voisins pour accelerer le super_rescue
+
+* VERSION 0.2.2 -> 0.2.3 (Vincent, 15/02/2011)
+	+ Correction de la distorsion
+
+* VERSION 0.2.3 -> 0.2.4 (Vincent + Gael, 28/02/2012)
+	+ Parallelisation du subpixel (ne fonctionne pas -> powell a revoir...)
+
+* VERSION 0.2.4 -> 0.2.5 (Vincent, 09/03/2012)
+	+ Parallelisation du subpixel fonctionne apres avoir utilise un powell ecrit en C++
+
+* VERSION 0.2.5 -> 0.3.0 (Vincent + Gael, 26/03/2012)
+	+ c'est maintenant l'image 1 (et non plus 0) qui est interpolee. 
+	+ Les tests sur les translations et rotations sont en cours.
+	+ Le probleme des mesures de mauvaises qualitees lorsque la rotation etait grande est maintenant resolu.
+ 
+* VERSION 0.3.0 -> 0.3.1 (Vincent, 10/06/2013)
+	+ Determination des positions subpixels des centres de grains (disques, rouleaux de Schneebeli). 
+	+ Ajout d'un "0." devant les numeros de version
+
+* VERSION 0.3.1 -> 0.3.2 (Vincent, 04/07/2013)
+	+ Lecture des fichier RAW et demosaication avec LibRaw
+	
+* VERSION 0.3.2 -> 0.3.3 (Gael)
+	+ Lecture des positions des grains en nombres réels possible (la valeur retenue est le plus proche entier).
+
+* VERSION 0.3.2 -> 0.4.0 (Vincent, 21/05/2014, SVN REVISION 189) 
+	+ Utilisation de std::thread pour le calcul parallele si l'utilisation d'openMP n'est pas possible (e.g. avec clang++).
+	+ La compilation SANS Magick++ est maintement possible.
+	+ Utilisation des std::vector pour gérer la mémoire. (Donc plus de limitation sur le nombre de voisins)
+	- Function d'allocation de tableaux supprimés.
+	- Certains compteurs num_* (e.g. num_patterns) ne sont plus nécessaires et donc remplacés par *.size() (e.g. pattern.size()).
+	+ Version 3D de tracker a été créée (uniquement le suivi avec une précision au pixel fonctionne pour le moment)
+	
+* VERSION 0.4.0 -> 0.5.0 (Vincent, 05/02/2014, SVN REVISION 197)
+	+ le pattern utilise pour le optimisation subpixel est maintenant le meme que celui du 'follow pixel'
+	- le parametre 'interp_mask_size' a ete supprime
+	+ Possibilité de rescaler les niveaux de gris pour la lecture des images RAW
+	+ Utilisation des données RAW (avant tout traitement) avec LibRaw
+
+* VERSION 0.5.0 -> 0.5.1 (Vincent, 13/06/2014, SVN REVISION 214)
+	- suppression des std::threads (boggué)
+	+ meilleur répartition de la charge des threads avec openMP
+
+* VERSION 0.5.1 -> 0.5.2 (Vincent, 04/06/2015, SVN REVISION 245)
+	+ Utilisation de libtiff si Magick++ n'est pas utilisé
+	+ Thumbnails pour faire des visu en surimpression sur les images
+	+ Procedure visu_process pour gerer ces visu
+* VERSION 0.5.2 -> 0.6 (Vincent et Gael, 03/04/2017, SVN REVISION 272)
+    - Suppression complète de Magick++
+	+ recalcul des incréments upix, vpix, rot_inc (qui était faux avant)
