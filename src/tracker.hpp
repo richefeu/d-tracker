@@ -1,25 +1,17 @@
-// TRACKER
-// December 2011, Janvier 2012
-// Gael.Combe@ujf-grenoble.fr
-// Vincent.Richefeu@ujf-grenoble.fr
-// Lab 3SR, Grenoble
+#pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint> // for uint16_t
 #include <cstdio>
 #include <cstdlib>
-#ifndef M_PI
-#define M_PI 3.1415926535
-#endif
-#include <algorithm>
-#include <cstdint> // for uint16_t
 #include <cstring> // for strcmp
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
-
-//#include <fftw3.h>
 
 #define MAX_NUMBER_THREADS 48
 
@@ -29,21 +21,21 @@
 
 int progress;
 
+#include "libraw.h"
 #include <tiffio.h>
 
-#ifndef CYGWIN
-#include "libraw.h"
-#endif
+#include "toofus/ColorTable.hpp"
+#include "toofus/delaunay2D.hpp"
+#include "toofus/powell_nr3.hpp"
 
-#include "ColorTable.cpp"
+#include "thumbnail.hpp"
 
-using namespace std;
 
-#define SHOW(V) cout << #V " = " << V << flush << endl
+#define SHOW(V) std::cout << #V " = " << V << std::endl
 
-ofstream g_logfile;
+std::ofstream g_logfile;
 #define LOG(V)                                                                                                       \
-  cout << V;                                                                                                         \
+  std::cout << V;                                                                                                    \
   if (g_logfile)                                                                                                     \
   g_logfile << V
 
@@ -72,20 +64,22 @@ void follow_pattern_rescue_pixel(int igrain);
 void follow_pattern_super_rescue_pixel(int igrain);
 
 void follow_pattern_subpixel_xyR(int igrain);
-double NCC_to_minimize_xyR(vector<double> &);
+double NCC_to_minimize_xyR(std::vector<double> &);
 
-double Equiproj_Error_Computation(vector<double> &);
-double disto_to_minimize_Equiproj(vector<double> &);
-double disto_to_minimize_grid(vector<double> &);
+double Equiproj_Error_Computation(std::vector<double> &);
+double disto_to_minimize_Equiproj(std::vector<double> &);
+double disto_to_minimize_grid(std::vector<double> &);
 
-double SolidMotionError_to_minimize(vector<double> &X);
+double SolidMotionError_to_minimize(std::vector<double> &X);
 void SolidMotionError(double &angle, double &xc, double &yc, double &xtrans, double &ytrans, double &mean,
                       double &stddev);
 
 int read_data(const char *name); // To read the command file
 void write_data(const char *name);
 void read_image(int i, int num, bool = false);
+void read_image(int i, const char *name, bool first_time);
 void read_raw_image(int i, int num, bool = false);
+void read_raw_image(int i, const char *name, bool first_time);
 void make_grid(double xmin, double xmax, double ymin, double ymax, int nx, int ny);
 int read_grains(const char *name, bool restart);
 int read_gmsh(const char *name);
@@ -102,6 +96,7 @@ void distor(double *X, const double xd, const double yd, double &xu, double &yu)
 void diff_distor(double *X, const double xu, const double yu, double &dxd_dxu, double &dyd_dyu);
 int undistor(double *X, const double xd, const double yd, double &xu, double &yu, int niterMax = 100,
              double tol = 1e-3, int nconv = 3);
+void undistor_image(const char * /*name_from*/, const char * /*name_to*/);
 void setSolidSolutionFromRef(double DX, double DY, double DROT);
 
 void set_solidTranslation(double u, double v);
@@ -109,12 +104,11 @@ void mask_rect(int xmin, int xmax, int ymin, int ymax);
 
 // Procedures
 void particle_tracking();
-void particle_tracking_v2_subpix();
+void particle_tracking_human_assisted();
 void correction_distortion();
 void correction_distortion_grid();
 void find_subpixel_centers();
 void pattern_quality();
-void pattern_fft();
 void post_process();
 
 // Synthetic images
@@ -134,21 +128,21 @@ struct subpix_coord_type {
   double x, y;
 };
 
-string procedure("particle_tracking"); // the default procedure is to track particles
+std::string procedure("particle_tracking"); // the default procedure is to track particles
 
 int fake_undistor = 0;
 
 // Distortion parameters (grid method)
-string grid_image_name;
+std::string grid_image_name;
 int nx_grid_disto;
 int ny_grid_disto;
 
 // Distortion parameters (displacement method)
-vector<int> image_numbers_corrDisto;
-vector<double> imposed_displ_x_pix, imposed_displ_y_pix;
-vector<vector<double>> dx_corrDisto, dy_corrDisto, NCC_subpix_corrDisto;
-vector<double> disto_parameters(8);
-vector<double> disto_parameters_perturb(8);
+std::vector<int> image_numbers_corrDisto;
+std::vector<double> imposed_displ_x_pix, imposed_displ_y_pix;
+std::vector<std::vector<double>> dx_corrDisto, dy_corrDisto, NCC_subpix_corrDisto;
+std::vector<double> disto_parameters(8);
+std::vector<double> disto_parameters_perturb(8);
 // 0 -> xc
 // 1 -> yc
 // 2 -> K1
@@ -159,15 +153,15 @@ vector<double> disto_parameters_perturb(8);
 // 7 -> P3
 
 // These vectors are used for the correction of distortions
-vector<int> List_Grains_i;
-vector<int> List_Grains_j;
+std::vector<int> List_Grains_i;
+std::vector<int> List_Grains_j;
 double equiProj_dist_min = 0.0;
 double equiProj_dist_max = 1000.0;
 
 // subpixel positionning of rod centers
-vector<double> xbound, ybound;
-vector<double> center_parameters(3);
-vector<double> center_parameters_perturb(3);
+std::vector<double> xbound, ybound;
+std::vector<double> center_parameters(3);
+std::vector<double> center_parameters_perturb(3);
 double subpix_center_dr0 = 10.0;
 double subpix_center_xstep = 0.1;
 double subpix_center_ystep = 0.1;
@@ -198,14 +192,14 @@ float colorMin = 0.7;
 float colorMax = 1.0;
 int visu_autoscale = 1;
 double visu_alpha = 0.3;
-string visu_output = "NCC";
-string visu_mode = "discrete";
+std::string visu_output = "NCC";
+std::string visu_mode = "discrete";
 int nx_grid_visu;
 int smoothDegreeF = 1;
 int visu_draw_in_ref = 0;
 
 // Minimization (Subpixel)
-#include "powell_nr3.hpp"
+
 double subpix_tol = 1e-8;
 double initial_direction_dx = 0.01;
 double initial_direction_dy = 0.01;
@@ -230,15 +224,16 @@ struct imageDATA {
   std::string dateTime;
 };
 
-vector<vector<vector<uint16_t>>> image;   // image[0 or 1][dimx][dimy]
-vector<imageDATA> imageData(2);           // imageData[0 or 1]
+std::vector<std::vector<std::vector<uint16_t>>> image; // image[0 or 1][dimx][dimy]
+#include "interpol.hpp"
+std::vector<imageDATA> imageData(2);                   // imageData[0 or 1]
 char image_name[256];                     // Image name in "printf" style. Example: "./quelquepart/toto%04d.tif"
 char dic_name[256];                       // DIC-file name in "printf" style. Example: "./quelquepart/dic_out_%d.txt"
 int iref, ibeg, iend, iinc, iraz, idelta; // Control of file numbers
 bool require_precomputations = true;      // If true, remake the pre-computations
 int dimx = 0, dimy = 0;                   // Image sizes
-string pattern_command;
-string grain_positions_command;
+std::string pattern_command;
+std::string grain_positions_command;
 
 int im_index_ref = 0, im_index_current = 1; // Index of image origin and target in table image
 int wanted_num_threads = 4;
@@ -274,23 +269,21 @@ static inline void loadbar(size_t x, size_t n, size_t w = 50) {
   float ratio = x / (float)n;
   size_t c = ratio * w;
 
-  cerr << setw(3) << (size_t)(ratio * 100) << "% [";
+  std::cerr << std::setw(3) << (size_t)(ratio * 100) << "% [";
   for (size_t x = 0; x < c; x++)
-    cerr << "|";
+    std::cerr << "|";
   for (size_t x = c; x < w; x++)
-    cerr << " ";
-  cerr << "]\r" << flush;
+    std::cerr << " ";
+  std::cerr << "]\r" << std::flush;
 }
 
 std::string timestamp2string(time_t rawtime) {
-  struct tm * timeinfo;
-  timeinfo = localtime (&rawtime);
+  struct tm *timeinfo;
+  timeinfo = localtime(&rawtime);
   char retChar[256];
   sprintf(retChar, "%s", asctime(timeinfo));
   return std::string(retChar);
 }
-
-#include "interpol.cpp"
 
 struct grain_type_2D {
   // variables initiales (generalement ce sont les donnees d'entree)
@@ -300,14 +293,14 @@ struct grain_type_2D {
   double radius_pix; // Grain radius expressed in sub-pixels (input data)
 
   // Deplacements et rotation cumules par rapport aux variables initiales (par rapport à refxxx)
-  double dx=0;
-  double dy=0;
-  double drot=0;
+  double dx = 0;
+  double dy = 0;
+  double drot = 0;
 
   // Backup des deplacements et rotations cumulés
-  double dx_prev=0;
-  double dy_prev=0;
-  double drot_prev=0;
+  double dx_prev = 0;
+  double dy_prev = 0;
+  double drot_prev = 0;
 
   // Kinematic data obtain on current DIC (num_image to num_image+iinc)
   double upix;    // x translation resulting from last DIC
@@ -321,12 +314,12 @@ struct grain_type_2D {
   double mean0, C0C0; // Precomputed data for the computation of NCCs
   bool masked;        // Pour les point dans une zone à ne pas correlé (utilisation avec une grille)
 
-  vector<relative_coord_type> pattern;          // A list of relative positions that represent a pattern
-  vector<relative_coord_type> pattern0_rotated; // Rotated pattern for the reference position
-  vector<relative_coord_type> pattern1_rotated; // Rotated pattern for the tested position
+  std::vector<relative_coord_type> pattern;          // A list of relative positions that represent a pattern
+  std::vector<relative_coord_type> pattern0_rotated; // Rotated pattern for the reference position
+  std::vector<relative_coord_type> pattern1_rotated; // Rotated pattern for the tested position
 
-  vector<int> neighbour; // List of neighbouring grains
-  int num_neighbour;     // Number of neighbour for igrain (according to neighbour_dist_pix) @fixme supprimer
+  std::vector<int> neighbour; // List of neighbouring grains
+  int num_neighbour;          // Number of neighbour for igrain (according to neighbour_dist_pix) @fixme supprimer
 
   // Constructor
   grain_type_2D() {
@@ -404,16 +397,16 @@ struct increasingHeight_order {
   }
 };
 
-vector<grain_type_2D> grain;
+std::vector<grain_type_2D> grain;
 int num_grains = 0;
 
-vector<triangle> mesh;
+std::vector<triangle> mesh;
 
-vector<int> to_be_rescued;
+std::vector<int> to_be_rescued;
 int num_to_be_rescued = 0;
 double NCC_min = 0.7; // The NCC-value above which a first rescue is mandatory
 
-vector<int> to_be_super_rescued;
+std::vector<int> to_be_super_rescued;
 int num_to_be_super_rescued = 0;
 double NCC_min_super = 0.5; // The NCC-value above which a super_rescue is mandatory
 
@@ -437,6 +430,4 @@ search_zone_type search_zone_super_rescue; // For points with very bad mathing
 // Do not hesitate to increase the maximum number of threads if necessary
 int igrain_of_thread[MAX_NUMBER_THREADS];
 
-#include "delaunay2D.hpp"
-#include "image_io.cpp"
-#include "thumbnail.hpp"
+//#include "interpol.hpp"

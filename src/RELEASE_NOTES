@@ -81,6 +81,11 @@ RELEASE NOTES (in French)
 	+ Utilisation de libtiff si Magick++ n'est pas utilisé
 	+ Thumbnails pour faire des visu en surimpression sur les images
 	+ Procedure visu_process pour gerer ces visu
+
 * VERSION 0.5.2 -> 0.6 (Vincent et Gael, 03/04/2017, SVN REVISION 272)
-    - Suppression complète de Magick++
+  - Suppression complète de Magick++
 	+ recalcul des incréments upix, vpix, rot_inc (qui était faux avant)
+
+* VERSION 0.6.0 -> 0.7.0 (2026)
+  - plus de trace de l'ancien SVN
+  + procédure de correction à la main (particle_tracking_human_assisted)

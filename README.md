@@ -1,5 +1,5 @@
 <p align="center">
-<img src="./logo2.png" width="50%"/>
+<img src="./logo/logo-text-couleur-UGA.png" width="60%"/>
 </p>
 
 ## What is `d-tracker`?  

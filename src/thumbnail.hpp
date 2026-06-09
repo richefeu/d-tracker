@@ -25,19 +25,22 @@ struct RGB {
 };
 
 class thumbnail {
+  int nearest(double x) { return (int)floor(x + 0.5); }
+  int nearest(float x) { return (int)floor(x + 0.5); }
+  
 public:
-  vector<vector<uint16_t>> imThumb;
-  vector<vector<RGB>> colorThumb; // superimposed colors
+  std::vector<std::vector<uint16_t>> imThumb;
+  std::vector<std::vector<RGB>> colorThumb; // superimposed colors
   int imW;
   int imH;
   int image_div;
 
   // Ctor
-  thumbnail(vector<vector<vector<uint16_t>>> &image, int index, int imageDiv) : image_div(imageDiv) {
+  thumbnail(std::vector<std::vector<std::vector<uint16_t>>> &image,int dimx, int dimy, int index, int imageDiv) : image_div(imageDiv) {
     imW = dimx / image_div; // integer division
     imH = dimy / image_div;
-    cout << "Image size: " << dimx << "x" << dimy << endl;
-    cout << "Thumbnail size: " << imW << "x" << imH << endl;
+    std::cout << "Image size: " << dimx << "x" << dimy << std::endl;
+    std::cout << "Thumbnail size: " << imW << "x" << imH << std::endl;
 
     imThumb.resize(imW);
     colorThumb.resize(imW);
@@ -116,10 +119,10 @@ public:
   }
 
   void writePpm(const char *name, double alpha) {
-    ofstream file(name, ios::binary);
-    file << "P6" << endl;
-    file << imW << " " << imH << endl;
-    file << "255" << endl;
+    std::ofstream file(name, std::ios::binary);
+    file << "P6" << std::endl;
+    file << imW << " " << imH << std::endl;
+    file << "255" << std::endl;
 
     double conv = 255.0 / 65535.0;
 
@@ -151,7 +154,7 @@ public:
 
     // Open the TIFF file
     if ((output_image = TIFFOpen(name, "w")) == NULL) {
-      cerr << "Unable to write tif file: " << name << endl;
+      std::cerr << "Unable to write tif file: " << name << std::endl;
     }
 
     // We need to set some values for basic tags before we can add any data
@@ -172,7 +175,7 @@ public:
 
     // Now save the image (line by line)
     double conv = 255.0 / 65535.0;
-    vector<unsigned char> m_image_data(imW * 3);
+    std::vector<unsigned char> m_image_data(imW * 3);
     unsigned char v, r, g, b;
     for (int y = 0; y < imH; y++) {
       for (int x = 0; x < imW; x++) {
@@ -381,7 +384,7 @@ public:
           double l2 = (x - xd) * invL;
           RGB col = (1.0 - l2) * cold + l2 * cole;
           int yy = y2 + y;
-          if (x >= 0 && x < dimx && yy >= 0 && yy < dimy)
+          if (x >= 0 && x < imW && yy >= 0 && yy < imH)
             colorThumb[x][yy] = col;
         }
       }
@@ -406,7 +409,7 @@ public:
           double l2 = (x - xd) * invL;
           RGB col = (1.0 - l2) * cold + l2 * cole;
           int yy = y3 - y;
-          if (x >= 0 && x < dimx && yy >= 0 && yy < dimy)
+          if (x >= 0 && x < imW && yy >= 0 && yy < imH)
             colorThumb[x][yy] = col;
         }
       }
