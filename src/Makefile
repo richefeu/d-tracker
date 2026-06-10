@@ -4,10 +4,10 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 	# You can install clang-omp by using homebrew: brew install clang-omp
 	CC = g++-15
-	CC_OPT = -fopenmp -O3 -W -Wall -std=c++17
+	CC_OPT = -fopenmp -O3 -W -Wall -Wextra -Wpedantic -std=c++17
 else
 	CC = g++
-	CC_OPT = -fopenmp -O3 -pedantic -W -Wall -Wno-deprecated -std=c++0x
+	CC_OPT = -fopenmp -O3 -pedantic -W -Wall -Wno-deprecated -std=c++17
 endif
 
 # Ensure the toofus directory exists
@@ -19,8 +19,9 @@ endif
 # You have to compile libRaw (available in the folder ThirdParty) and install it
 # ./configure, make, sudo make install
 # You can also install it with Homebrew (on apple-mac), or something else (apt-get, etc.).
-CONFIG_LIBRAW = `pkg-config --cflags --libs libraw`
-CONFIG_LIBTIFF = `pkg-config --cflags --libs libtiff-4`
+CONFIG_LIBRAW = $(shell pkg-config --cflags --libs libraw | sed 's/-lstdc++//g') 
+CONFIG_LIBTIFF = $(shell pkg-config --cflags --libs libtiff-4) 
+
 
 .PHONY: all clean clone_toofus
 

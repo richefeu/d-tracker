@@ -1,10 +1,16 @@
+#pragma once
+
+#include <vector>
+#include <cstdint>
 
 struct image_interpolator {
+  std::vector<std::vector<std::vector<uint16_t>>> *image;
   // In this pur virtual function, x and y are subpixel coordinates
-  virtual double getValue(int, double, double) = 0;
+  virtual double getValue(int i, double x, double y) = 0;
 };
 
 struct image_interpLinear : public image_interpolator {
+  //std::vector<std::vector<std::vector<uint16_t>>> *image;
   double LinearInterpolate(double p[2], double x) { return ((p[1] - p[0]) * x + p[0]); }
 
   double getValue(int i, double x, double y) {
@@ -15,10 +21,10 @@ struct image_interpLinear : public image_interpolator {
 
     double p[2][2];
     // Il n'y a aucune securite ici -> plantage si x ou y sort des clous
-    p[0][0] = image[i][ix][iy];
-    p[1][0] = image[i][ix + 1][iy];
-    p[0][1] = image[i][ix][iy + 1];
-    p[1][1] = image[i][ix + 1][iy + 1];
+    p[0][0] = (*image)[i][ix][iy];
+    p[1][0] = (*image)[i][ix + 1][iy];
+    p[0][1] = (*image)[i][ix][iy + 1];
+    p[1][1] = (*image)[i][ix + 1][iy + 1];
 
     double arr[2];
     arr[0] = LinearInterpolate(p[0], y01);
@@ -30,6 +36,7 @@ struct image_interpLinear : public image_interpolator {
 
 // Adapted from: http://www.paulinternet.nl/?page=bicubic
 struct image_interpCubic : public image_interpolator {
+  //std::vector<std::vector<std::vector<uint16_t>>> *image;
   double CubicInterpolate(double p[4], double x) {
     double f0 = p[1];
     double f1 = p[2];
@@ -50,22 +57,22 @@ struct image_interpCubic : public image_interpolator {
     double x01 = x - (double)ix;
     double p[4][4];
     // Il n'y a aucune securite ici -> plantage si x ou y sort des clous
-    p[0][0] = image[i][ix - 1][iy - 1];
-    p[1][0] = image[i][ix][iy - 1];
-    p[2][0] = image[i][ix + 1][iy - 1];
-    p[3][0] = image[i][ix + 2][iy - 1];
-    p[0][1] = image[i][ix - 1][iy];
-    p[1][1] = image[i][ix][iy];
-    p[2][1] = image[i][ix + 1][iy];
-    p[3][1] = image[i][ix + 2][iy];
-    p[0][2] = image[i][ix - 1][iy + 1];
-    p[1][2] = image[i][ix][iy + 1];
-    p[2][2] = image[i][ix + 1][iy + 1];
-    p[3][2] = image[i][ix + 2][iy + 1];
-    p[0][3] = image[i][ix - 1][iy + 2];
-    p[1][3] = image[i][ix][iy + 2];
-    p[2][3] = image[i][ix + 1][iy + 2];
-    p[3][3] = image[i][ix + 2][iy + 2];
+    p[0][0] = (*image)[i][ix - 1][iy - 1];
+    p[1][0] = (*image)[i][ix][iy - 1];
+    p[2][0] = (*image)[i][ix + 1][iy - 1];
+    p[3][0] = (*image)[i][ix + 2][iy - 1];
+    p[0][1] = (*image)[i][ix - 1][iy];
+    p[1][1] = (*image)[i][ix][iy];
+    p[2][1] = (*image)[i][ix + 1][iy];
+    p[3][1] = (*image)[i][ix + 2][iy];
+    p[0][2] = (*image)[i][ix - 1][iy + 1];
+    p[1][2] = (*image)[i][ix][iy + 1];
+    p[2][2] = (*image)[i][ix + 1][iy + 1];
+    p[3][2] = (*image)[i][ix + 2][iy + 1];
+    p[0][3] = (*image)[i][ix - 1][iy + 2];
+    p[1][3] = (*image)[i][ix][iy + 2];
+    p[2][3] = (*image)[i][ix + 1][iy + 2];
+    p[3][3] = (*image)[i][ix + 2][iy + 2];
 
     double arr[4];
     arr[0] = CubicInterpolate(p[0], y01);
@@ -78,6 +85,7 @@ struct image_interpCubic : public image_interpolator {
 };
 
 struct image_interpQuintic : public image_interpolator {
+  //std::vector<std::vector<std::vector<uint16_t>>> *image;
   double QuinticInterpolate(double p[4], double x) {
     // values:
     double f0 = p[1];
@@ -109,22 +117,22 @@ struct image_interpQuintic : public image_interpolator {
     double p[4][4];
 
     // Il n'y a aucune securite ici -> plantage si x ou y sort des clous
-    p[0][0] = image[i][ix - 1][iy - 1];
-    p[1][0] = image[i][ix][iy - 1];
-    p[2][0] = image[i][ix + 1][iy - 1];
-    p[3][0] = image[i][ix + 2][iy - 1];
-    p[0][1] = image[i][ix - 1][iy];
-    p[1][1] = image[i][ix][iy];
-    p[2][1] = image[i][ix + 1][iy];
-    p[3][1] = image[i][ix + 2][iy];
-    p[0][2] = image[i][ix - 1][iy + 1];
-    p[1][2] = image[i][ix][iy + 1];
-    p[2][2] = image[i][ix + 1][iy + 1];
-    p[3][2] = image[i][ix + 2][iy + 1];
-    p[0][3] = image[i][ix - 1][iy + 2];
-    p[1][3] = image[i][ix][iy + 2];
-    p[2][3] = image[i][ix + 1][iy + 2];
-    p[3][3] = image[i][ix + 2][iy + 2];
+    p[0][0] = (*image)[i][ix - 1][iy - 1];
+    p[1][0] = (*image)[i][ix][iy - 1];
+    p[2][0] = (*image)[i][ix + 1][iy - 1];
+    p[3][0] = (*image)[i][ix + 2][iy - 1];
+    p[0][1] = (*image)[i][ix - 1][iy];
+    p[1][1] = (*image)[i][ix][iy];
+    p[2][1] = (*image)[i][ix + 1][iy];
+    p[3][1] = (*image)[i][ix + 2][iy];
+    p[0][2] = (*image)[i][ix - 1][iy + 1];
+    p[1][2] = (*image)[i][ix][iy + 1];
+    p[2][2] = (*image)[i][ix + 1][iy + 1];
+    p[3][2] = (*image)[i][ix + 2][iy + 1];
+    p[0][3] = (*image)[i][ix - 1][iy + 2];
+    p[1][3] = (*image)[i][ix][iy + 2];
+    p[2][3] = (*image)[i][ix + 1][iy + 2];
+    p[3][3] = (*image)[i][ix + 2][iy + 2];
 
     double arr[4];
     arr[0] = QuinticInterpolate(p[0], y01);
@@ -136,9 +144,10 @@ struct image_interpQuintic : public image_interpolator {
   }
 };
 
+/*
 image_interpLinear IMAGE_INTERPOLATOR_LINEAR;
 image_interpCubic IMAGE_INTERPOLATOR_CUBIC;
 image_interpQuintic IMAGE_INTERPOLATOR_QUINTIC;
 
 image_interpolator *IMAGE_INTERPOLATOR = &IMAGE_INTERPOLATOR_CUBIC;
-
+*/

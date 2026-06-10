@@ -1,13 +1,11 @@
 // ------------------------------------------
-// TRACKER 2.x, December 2011-2026
+// D-TRACKER, December 2011-2026
 // Laboratoire 3SR, Université Grenoble Alpes
 // ------------------------------------------
 
 #define TRACKER_VERSION "0.7.0"
 
 #include "tracker.hpp"
-
-// #######
 
 void header() {
   // http://www.patorjk.com/software/taag
@@ -19,17 +17,152 @@ void header() {
   std::cout << " _/      _/    _/  _/    _/  _/        _/  _/    _/        _/    _/  " << "\n";
   std::cout << "_/      _/    _/  _/    _/    _/_/_/  _/    _/  _/_/_/_/  _/    _/   " << "\n";
   std::cout << std::endl;
-  std::cout << " by Vincent.Richefeu@3sr-grenoble.fr AND Gael.Combe@3sr-grenoble.fr  " << "\n";
+  std::cout << " Vincent.Richefeu@3sr-grenoble.fr AND Gael.Combe@3sr-grenoble.fr  " << "\n";
   std::cout << "\n\n";
-  std::cout << "_____ Version number: " << TRACKER_VERSION << std::endl;
+  std::cout << " Version: " << TRACKER_VERSION << std::endl;
 
 #if defined(_OPENMP)
-  std::cout << "_____ Accelerator: OPENMP" << std::endl;
+  std::cout << " Accelerator: OPENMP" << std::endl;
 #else
-  std::cout << "_____ Accelerator: None" << std::endl;
+  std::cout << " Accelerator: None" << std::endl;
 #endif
 
   std::cout << std::endl << std::endl;
+}
+
+int init(int argc, char *argv[]) {
+
+  if (argc > 2) {
+    fprintf(stderr, "Usage: %s command_file\n", argv[0]);
+    fprintf(stderr, "Type %s -h for help\n", argv[0]);
+    exit(0);
+  }
+
+  if (argc == 2) {
+    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+      header();
+      std::cout << std::endl;
+      std::cout << "Help can be found in the folder 'examples' or 'doc'" << std::endl;
+      std::cout << "  -v, --version   Display information about the soft" << std::endl;
+      std::cout << "  -h, --help      This help" << std::endl;
+      std::cout << "  -s, --sizes     Print size of common types (in bits) for this computer" << std::endl;
+      std::cout << "  -g, --generate  Generate synthetic images for accuracy tests" << std::endl;
+      std::cout << "  -d, --dialog    Use tracker to interactively extract information" << std::endl;
+      std::cout << std::endl;
+      exit(0);
+    } else if (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--version") == 0) {
+      header();
+      exit(0);
+    } else if (strcmp(argv[1], "-s") == 0 || strcmp(argv[1], "--sizes") == 0) {
+      std::cout << std::endl;
+      std::cout << "unsigned char....." << sizeof(unsigned char) * 8 << " bits" << std::endl;
+      std::cout << "unsigned short...." << sizeof(unsigned short) * 8 << " bits" << std::endl;
+      std::cout << "unsigned int......" << sizeof(unsigned int) * 8 << " bits" << std::endl;
+      std::cout << "float............." << sizeof(float) * 8 << " bits" << std::endl;
+      std::cout << "double............" << sizeof(double) * 8 << " bits" << std::endl;
+      std::cout << "uint16_t.........." << sizeof(uint16_t) * 8 << " bits" << std::endl;
+      std::cout << "uint16_t..........." << sizeof(uint16_t) * 8 << " bits" << std::endl;
+      std::cout << std::endl;
+      exit(0);
+    } else if (strcmp(argv[1], "-g") == 0 || strcmp(argv[1], "--generate") == 0) {
+      int number_images = 0;
+      double defx = 0.0, defy = 0.0, transx_pix = 0.0, transy_pix = 0.0, rot_deg = 0.0;
+      double defx_inc = 0.0, defy_inc = 0.0, transx_pix_inc = 0.0, transy_pix_inc = 0.0, rot_deg_inc = 0.0;
+      int w, h, octaves;
+      double zoom, p;
+
+      std::cout << std::endl;
+      std::cout << "___Synthese of images." << std::endl;
+      std::cout << "Number of images generated               : ";
+      std::cin >> number_images;
+      std::cout << "width (integer)                          : ";
+      std::cin >> w;
+      std::cout << "heigh (integer)                          : ";
+      std::cin >> h;
+      std::cout << std::endl;
+      std::cout << "___Perlin noise. (octaves = 6, persistence = 0.5 and zoom = 5.0 seem to be ok)" << std::endl;
+      std::cout << "octaves (integer)                        : ";
+      std::cin >> octaves;
+      std::cout << "persistence (double)                     : ";
+      std::cin >> p;
+      std::cout << "zoom (double)                            : ";
+      std::cin >> zoom;
+      std::cout << "___Transformations. (positive values correspond to left->right for x, top->bottom for y, "
+                   "counterclockwise for rotation)"
+                << std::endl;
+      std::cout << "x-deformation increment (-, double) : ";
+      std::cin >> defx_inc;
+      std::cout << "y-deformation increment (-, double) : ";
+      std::cin >> defy_inc;
+      std::cout << "x-translation increment (pixels, double) : ";
+      std::cin >> transx_pix_inc;
+      std::cout << "y-translation increment (pixels, double) : ";
+      std::cin >> transy_pix_inc;
+      std::cout << "rotation increment (degrees, double)     : ";
+      std::cin >> rot_deg_inc;
+
+      // LOG in a file
+      std::ofstream file("synth_log.txt");
+      file << "___Synthese of images." << std::endl;
+      file << "Number of images generated               : " << number_images << std::endl;
+      file << "width (integer)                          : " << w << std::endl;
+      file << "heigh (integer)                          : " << h << std::endl;
+      file << std::endl;
+      file << "___Perlin noise." << std::endl;
+      file << "octaves (integer)                        : " << octaves << std::endl;
+      file << "persistence (double)                     : " << p << std::endl;
+      file << "zoom (double)                            : " << zoom << std::endl;
+      file << "___Transformations." << std::endl;
+      file << "x-deformation increment (pixels, double) : " << defx_inc << std::endl;
+      file << "y-deformation increment (pixels, double) : " << defy_inc << std::endl;
+      file << "x-translation increment (pixels, double) : " << transx_pix_inc << std::endl;
+      file << "y-translation increment (pixels, double) : " << transy_pix_inc << std::endl;
+      file << "rotation increment (degrees, double)     : " << rot_deg_inc << std::endl;
+
+      // image 0 non transformée
+      generate_synthetic_images(w, h, zoom, octaves, p, defx, defy, transx_pix, transy_pix, rot_deg);
+      for (int im = 1; im <= number_images; im++) {
+        defx += defx_inc;
+        defy += defy_inc;
+        transx_pix += transx_pix_inc;
+        transy_pix += transy_pix_inc;
+        rot_deg += rot_deg_inc;
+
+        generate_synthetic_images(w, h, zoom, octaves, p, defx, defy, transx_pix, transy_pix, rot_deg);
+      }
+      exit(0);
+    } else if (strcmp(argv[1], "-d") == 0 || strcmp(argv[1], "--dialog") == 0) {
+      dialog();
+    } else {
+      header();
+      read_data(argv[1]);
+    }
+  } else { // tracker has been invocked by double-clics or without arguments
+    header();
+    read_data("commands.txt");
+  }
+
+  g_logfile.open("tracking.log");
+
+  if (rotations == 0) { // to be replaced by if (search_zone_super_rescue.inc_rot == 0.0 || ...) (FIXME)
+    TRACKER_LOG("Rotation are NOT TRACKED!" << std::endl);
+    // Il faut choisir une valeur non nulle pour inc_rot sinon -> boucle infinie
+    search_zone_super_rescue.inc_rot = 1.0;
+    search_zone_rescue.inc_rot = 1.0;
+    search_zone.inc_rot = 1.0;
+
+    search_zone_super_rescue.num_rot = 0;
+    search_zone_rescue.num_rot = 0;
+    search_zone.num_rot = 0;
+  }
+
+#ifdef _OPENMP
+  omp_set_num_threads(wanted_num_threads);
+#endif
+
+  TRACKER_LOG("Number of threads: " << wanted_num_threads << std::endl);
+
+  return 1;
 }
 
 double get_time() {
@@ -203,13 +336,13 @@ void particle_tracking() {
   int irescue;
 
   if (use_neighbour_list) {
-    LOG("Build neighbour list ... " << std::flush);
+    TRACKER_LOG("Build neighbour list ... " << std::flush);
     tbeg = get_time();
     for (int igrain = 0; igrain < num_grains; igrain++) {
       grain[igrain].neighbour.clear();
       find_neighbours(igrain);
     }
-    LOG("[DONE in " << get_time() - tbeg << " seconds]" << std::endl);
+    TRACKER_LOG("[DONE in " << get_time() - tbeg << " seconds]" << std::endl);
   }
 
   for (num_image = ibeg; num_image <= iend; num_image += iinc) {
@@ -259,7 +392,7 @@ void particle_tracking() {
         follow_pattern_pixel(igrain);
 #pragma omp critical
         {
-          loadbar(++progress, grain.size());
+          msg::loadbar(++progress, grain.size());
         }
       }
 
@@ -282,7 +415,7 @@ void particle_tracking() {
         follow_pattern_rescue_pixel(igrain);
 #pragma omp critical
         {
-          loadbar(++progress, num_to_be_rescued);
+          msg::loadbar(++progress, num_to_be_rescued);
         }
       }
       std::cerr << std::endl;
@@ -318,7 +451,7 @@ void particle_tracking() {
         follow_pattern_super_rescue_pixel(igrain);
 #pragma omp critical
         {
-          loadbar(++progress, num_to_be_rescued);
+          msg::loadbar(++progress, num_to_be_rescued);
         }
       }
       std::cerr << std::endl;
@@ -358,7 +491,7 @@ void particle_tracking() {
         follow_pattern_subpixel_xyR(igrain);
 #pragma omp critical
         {
-          loadbar(++progress, num_grains);
+          msg::loadbar(++progress, num_grains);
         }
       }
       std::cerr << std::endl;
@@ -981,141 +1114,6 @@ void find_neighbours(int igrain) {
   }
 }
 
-int init(int argc, char *argv[]) {
-
-  if (argc > 2) {
-    fprintf(stderr, "Usage: %s command_file\n", argv[0]);
-    fprintf(stderr, "Type %s -h for help\n", argv[0]);
-    exit(0);
-  }
-
-  if (argc == 2) {
-    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
-      header();
-      std::cout << std::endl;
-      std::cout << "Help can be found in the folder 'examples' or 'doc'" << std::endl;
-      std::cout << "  -v, --version   Display information about the soft" << std::endl;
-      std::cout << "  -h, --help      This help" << std::endl;
-      std::cout << "  -s, --sizes     Print size of common types (in bits) for this computer" << std::endl;
-      std::cout << "  -g, --generate  Generate synthetic images for accuracy tests" << std::endl;
-      std::cout << "  -d, --dialog    Use tracker to interactively extract information" << std::endl;
-      std::cout << std::endl;
-      exit(0);
-    } else if (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--version") == 0) {
-      header();
-      exit(0);
-    } else if (strcmp(argv[1], "-s") == 0 || strcmp(argv[1], "--sizes") == 0) {
-      std::cout << std::endl;
-      std::cout << "unsigned char....." << sizeof(unsigned char) * 8 << " bits" << std::endl;
-      std::cout << "unsigned short...." << sizeof(unsigned short) * 8 << " bits" << std::endl;
-      std::cout << "unsigned int......" << sizeof(unsigned int) * 8 << " bits" << std::endl;
-      std::cout << "float............." << sizeof(float) * 8 << " bits" << std::endl;
-      std::cout << "double............" << sizeof(double) * 8 << " bits" << std::endl;
-      std::cout << "uint16_t.........." << sizeof(uint16_t) * 8 << " bits" << std::endl;
-      std::cout << "uint16_t..........." << sizeof(uint16_t) * 8 << " bits" << std::endl;
-      std::cout << std::endl;
-      exit(0);
-    } else if (strcmp(argv[1], "-g") == 0 || strcmp(argv[1], "--generate") == 0) {
-      int number_images = 0;
-      double defx = 0.0, defy = 0.0, transx_pix = 0.0, transy_pix = 0.0, rot_deg = 0.0;
-      double defx_inc = 0.0, defy_inc = 0.0, transx_pix_inc = 0.0, transy_pix_inc = 0.0, rot_deg_inc = 0.0;
-      int w, h, octaves;
-      double zoom, p;
-
-      std::cout << std::endl;
-      std::cout << "___Synthese of images." << std::endl;
-      std::cout << "Number of images generated               : ";
-      std::cin >> number_images;
-      std::cout << "width (integer)                          : ";
-      std::cin >> w;
-      std::cout << "heigh (integer)                          : ";
-      std::cin >> h;
-      std::cout << std::endl;
-      std::cout << "___Perlin noise. (octaves = 6, persistence = 0.5 and zoom = 5.0 seem to be ok)" << std::endl;
-      std::cout << "octaves (integer)                        : ";
-      std::cin >> octaves;
-      std::cout << "persistence (double)                     : ";
-      std::cin >> p;
-      std::cout << "zoom (double)                            : ";
-      std::cin >> zoom;
-      std::cout << "___Transformations. (positive values correspond to left->right for x, top->bottom for y, "
-                   "counterclockwise for rotation)"
-                << std::endl;
-      std::cout << "x-deformation increment (-, double) : ";
-      std::cin >> defx_inc;
-      std::cout << "y-deformation increment (-, double) : ";
-      std::cin >> defy_inc;
-      std::cout << "x-translation increment (pixels, double) : ";
-      std::cin >> transx_pix_inc;
-      std::cout << "y-translation increment (pixels, double) : ";
-      std::cin >> transy_pix_inc;
-      std::cout << "rotation increment (degrees, double)     : ";
-      std::cin >> rot_deg_inc;
-
-      // LOG in a file
-      std::ofstream file("synth_log.txt");
-      file << "___Synthese of images." << std::endl;
-      file << "Number of images generated               : " << number_images << std::endl;
-      file << "width (integer)                          : " << w << std::endl;
-      file << "heigh (integer)                          : " << h << std::endl;
-      file << std::endl;
-      file << "___Perlin noise." << std::endl;
-      file << "octaves (integer)                        : " << octaves << std::endl;
-      file << "persistence (double)                     : " << p << std::endl;
-      file << "zoom (double)                            : " << zoom << std::endl;
-      file << "___Transformations." << std::endl;
-      file << "x-deformation increment (pixels, double) : " << defx_inc << std::endl;
-      file << "y-deformation increment (pixels, double) : " << defy_inc << std::endl;
-      file << "x-translation increment (pixels, double) : " << transx_pix_inc << std::endl;
-      file << "y-translation increment (pixels, double) : " << transy_pix_inc << std::endl;
-      file << "rotation increment (degrees, double)     : " << rot_deg_inc << std::endl;
-
-      // image 0 non transformée
-      generate_synthetic_images(w, h, zoom, octaves, p, defx, defy, transx_pix, transy_pix, rot_deg);
-      for (int im = 1; im <= number_images; im++) {
-        defx += defx_inc;
-        defy += defy_inc;
-        transx_pix += transx_pix_inc;
-        transy_pix += transy_pix_inc;
-        rot_deg += rot_deg_inc;
-
-        generate_synthetic_images(w, h, zoom, octaves, p, defx, defy, transx_pix, transy_pix, rot_deg);
-      }
-      exit(0);
-    } else if (strcmp(argv[1], "-d") == 0 || strcmp(argv[1], "--dialog") == 0) {
-      dialog();
-    } else {
-      header();
-      read_data(argv[1]);
-    }
-  } else { // tracker has been invocked by double-clics or without arguments
-    header();
-    read_data("commands.txt");
-  }
-
-  g_logfile.open("tracking.log");
-
-  if (rotations == 0) { // to be replaced by if (search_zone_super_rescue.inc_rot == 0.0 || ...) (FIXME)
-    LOG("Rotation are NOT TRACKED!" << std::endl);
-    // Il faut choisir une valeur non nulle pour inc_rot sinon -> boucle infinie
-    search_zone_super_rescue.inc_rot = 1.0;
-    search_zone_rescue.inc_rot = 1.0;
-    search_zone.inc_rot = 1.0;
-
-    search_zone_super_rescue.num_rot = 0;
-    search_zone_rescue.num_rot = 0;
-    search_zone.num_rot = 0;
-  }
-
-#ifdef _OPENMP
-  omp_set_num_threads(wanted_num_threads);
-#endif
-  // fprintf(stdout, "Number of threads: %d\n", wanted_num_threads);
-  LOG("Number of threads: " << wanted_num_threads << std::endl);
-
-  return 1;
-}
-
 int read_gmsh(const char *name) {
   std::ifstream meshFile(name);
   if (!meshFile) {
@@ -1130,7 +1128,7 @@ int read_gmsh(const char *name) {
   while (meshFile) {
     if (token == "$Nodes") {
       meshFile >> num_grains;
-      SHOW(num_grains);
+      TRACKER_SHOW(num_grains);
 
       if (!grain.empty())
         grain.clear();
@@ -1209,7 +1207,7 @@ int read_grains(const char *name, bool restart) {
   }
 
   grain_file >> num_grains;
-  SHOW(num_grains);
+  TRACKER_SHOW(num_grains);
 
   if (!grain.empty())
     grain.clear();
@@ -1965,8 +1963,7 @@ void write_data(const char *name) {
   command_file << "! END OF FILE";
 }
 
-
-//#include "image_io.cpp"
+// #include "image_io.cpp"
 
 // ====================================================================
 // _____ IMAGE MANAGEMENT _____
@@ -1987,17 +1984,18 @@ void read_image(int i, const char *name, bool first_time) {
   uint32_t w, h;
   size_t npixels;
   uint32_t *raster;
-  
-  
+
   char *infobuf;
-  if (TIFFGetField(tif, TIFFTAG_DATETIME, &infobuf)) imageData[i].dateTime = std::string(infobuf);
-  else imageData[i].dateTime = "dateTime unknown";
-  
+  if (TIFFGetField(tif, TIFFTAG_DATETIME, &infobuf))
+    imageData[i].dateTime = std::string(infobuf);
+  else
+    imageData[i].dateTime = "dateTime unknown";
+
   imageData[i].iso_speed = 0.0;
   imageData[i].shutter = 0.0;
   imageData[i].aperture = 0.0;
   imageData[i].focal_len = 0.0;
-  imageData[i].shot_order = 0; 
+  imageData[i].shot_order = 0;
 
   TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &w);
   TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
@@ -2037,12 +2035,30 @@ void read_image(int i, const char *name, bool first_time) {
       r = TIFFGetR(raster[p]) * fact;
       g = TIFFGetG(raster[p]) * fact;
       b = TIFFGetB(raster[p]) * fact;
-      if (r < 0.0) { r = 0.0; std::cerr << "@read_image, r < 0.0\n"; }
-      if (r > 1.0) { r = 1.0; std::cerr << "@read_image, r > 1.0\n"; }
-      if (g < 0.0) { g = 0.0; std::cerr << "@read_image, g < 0.0\n"; }
-      if (g > 1.0) { g = 1.0; std::cerr << "@read_image, g > 1.0\n"; }
-      if (b < 0.0) { b = 0.0; std::cerr << "@read_image, b < 0.0\n"; }
-      if (b > 1.0) { b = 1.0; std::cerr << "@read_image, b > 1.0\n"; }
+      if (r < 0.0) {
+        r = 0.0;
+        std::cerr << "@read_image, r < 0.0\n";
+      }
+      if (r > 1.0) {
+        r = 1.0;
+        std::cerr << "@read_image, r > 1.0\n";
+      }
+      if (g < 0.0) {
+        g = 0.0;
+        std::cerr << "@read_image, g < 0.0\n";
+      }
+      if (g > 1.0) {
+        g = 1.0;
+        std::cerr << "@read_image, g > 1.0\n";
+      }
+      if (b < 0.0) {
+        b = 0.0;
+        std::cerr << "@read_image, b < 0.0\n";
+      }
+      if (b > 1.0) {
+        b = 1.0;
+        std::cerr << "@read_image, b > 1.0\n";
+      }
       // r, g and b are now values in the range [0, 1]
 
       // Store in a c-style table, and convert in graylevel
@@ -2066,11 +2082,24 @@ void read_image(int i, const char *name, bool first_time) {
   fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
 }
 
+// This is the main function to read an image.
+// The image can be RAW or TIFF so that the library libraw or libtiff is used.
+// The image format is not recognized, but the user needs to set RawImage=1 to say that RAW format has to be used
+void read_image(int i, int num, bool first_time) {
+  char name[256];
+  sprintf(name, image_name, num);
+  if (RawImages)
+    read_raw_image(i, name, first_time);
+  else
+    read_image(i, name, first_time);
+}
+
+
 // il faut voir ici http://www.libraw.org/node/555 pour voir comment proceder
 // ici aussi :
 // http://stackoverflow.com/questions/22355491/libraw-is-making-my-images-too-bright-compared-to-nikons-own-converter
 void read_raw_image(int i, const char *name, bool first_time) {
-#ifndef CYGWIN
+
   LibRaw iProcessor;
   int IO_error = iProcessor.open_file(name);
   if (IO_error != 0) {
@@ -2099,20 +2128,28 @@ void read_raw_image(int i, const char *name, bool first_time) {
       }
     }
   }
-  
+
   // Get data about the image shot
   imageData[i].iso_speed = iProcessor.imgdata.other.iso_speed;
   imageData[i].shutter = iProcessor.imgdata.other.shutter;
   imageData[i].aperture = iProcessor.imgdata.other.aperture;
   imageData[i].focal_len = iProcessor.imgdata.other.focal_len;
   imageData[i].shot_order = iProcessor.imgdata.other.shot_order;
+
+  auto timestamp2string = [](time_t rawtime) -> std::string {
+    struct tm timeinfo;
+    localtime_r(&rawtime, &timeinfo); // Version thread-safe (POSIX)
+    std::stringstream ss;
+    ss << std::put_time(&timeinfo, "%a %b %d %H:%M:%S %Y\n");
+    return ss.str();
+  };
   imageData[i].dateTime = timestamp2string(iProcessor.imgdata.other.timestamp);
-  
+
   iProcessor.unpack();
   uint16_t MinGray = 65535, MaxGray = 0;
   double fact = 1.0 / (double)(iProcessor.imgdata.color.maximum);
-  //std::cout << "iProcessor.imgdata.color.maximum = " << iProcessor.imgdata.color.maximum << '\n';
-  //std::cout << "fact = " << fact << '\n';
+  // std::cout << "iProcessor.imgdata.color.maximum = " << iProcessor.imgdata.color.maximum << '\n';
+  // std::cout << "fact = " << fact << '\n';
 
   if (DemosaicModel >= 0) { // That are those of libRaw
     iProcessor.imgdata.params.user_qual = DemosaicModel;
@@ -2211,15 +2248,14 @@ void read_raw_image(int i, const char *name, bool first_time) {
           MinGray = image[i][x][y];
       }
     }
-    
   }
 
   iProcessor.recycle();
-  
+
   std::cout << "MinGray = " << MinGray << '\n';
   std::cout << "MaxGray = " << MaxGray << '\n';
-  
-  // rescale according to MaxGray and MinGray. 
+
+  // rescale according to MaxGray and MinGray.
   // It should be ok since we use ZNCC (which is not sensitive to a scale factor)
   // The default behaviour is to NOT rescale the gray levels
   if (rescaleGrayLevels) {
@@ -2243,57 +2279,28 @@ void read_raw_image(int i, const char *name, bool first_time) {
 
   fprintf(stdout, "[DONE in %f seconds, user_qual = %d]\n", get_time() - tbeg, iProcessor.imgdata.params.user_qual);
 
-#if 0
-	int x0_d = 10;
-	int y0_d = 10;
-	int W_d = 2000;
-	int H_d = 2000;
-	double rr = 255./65535.;
-	ofstream file("demosaicing.pgm", ios::binary);
-	file << "P5\n";
-	file << W_d << " " << H_d << endl;
-	file << "255" << endl;
-
-	for (int y = 0 ; y < H_d ; y++) {
-		for (int x = 0 ; x < W_d ; x++) {
-			file << (int)(rr*image[i][x + x0_d][y + y0_d]) << endl;
-		}
-	}
-
-	exit(0);
-#endif
-#endif
 }
 
 // This function has to be rewritten for a pgm (or tiff) output
-void undistor_image(const char * /*name_from*/, const char * /*name_to*/) {  
+void undistor_image(const char * /*name_from*/, const char * /*name_to*/) {
   read_image(im_index_ref, grid_image_name.c_str(), true);
-  
+
   double xu, yu;
-	for (int y = 0 ; y < dimy ; ++y) {
-		for (int x = 0 ; x < dimx ; ++x) {
-			undistor(&disto_parameters[0], x, y, xu, yu);
-			xu = nearest(xu);
-			yu = nearest(yu);
-			if (xu < 0. || xu >= dimx || yu < 0. || yu >= dimy) continue;
+  for (int y = 0; y < dimy; ++y) {
+    for (int x = 0; x < dimx; ++x) {
+      undistor(&disto_parameters[0], x, y, xu, yu);
+      xu = nearest(xu);
+      yu = nearest(yu);
+      if (xu < 0. || xu >= dimx || yu < 0. || yu >= dimy)
+        continue;
       image[im_index_current][(int)xu][(int)yu] = image[im_index_ref][x][y];
-		}
-	}
-  
+    }
+  }
+
   create_image_Netbpm(0);
 }
 
-// This is the main function to read an image.
-// The image can be RAW or TIFF so that the library libraw or libtiff is used.
-// The image format is not recognized, but the user needs to set RawImage=1 to say that RAW format has to be used
-void read_image(int i, int num, bool first_time) {
-  char name[256];
-  sprintf(name, image_name, num);
-  if (RawImages)
-    read_raw_image(i, name, first_time);
-  else
-    read_image(i, name, first_time);
-}
+
 
 void draw_circle(std::vector<std::vector<uint16_t>> &imThumb, int x_centre, int y_centre, int radius, uint16_t col) {
   int x = 0, y = radius, m = 5 - 4 * radius;
@@ -2438,14 +2445,8 @@ void create_image_Netbpm(int num) {
   std::cout << "done." << std::endl;
 }
 
-void create_image(int num) {
-  create_image_Netbpm(num);
-}
+void create_image(int num) { create_image_Netbpm(num); }
 
-
-
-// ####### DISTORTION CORRECTION
-//#include "distortion_correction.cpp"
 /************************************************************************************************/
 /*                                CORRECTION OF DISTORSION                                      */
 /************************************************************************************************/
@@ -2571,7 +2572,7 @@ void precompute_paires() {
       }
     }
   }
-  
+
   std::cout << "Number of points for equiprojectivity computations: " << List_Grains_i.size() << '\n';
 }
 
@@ -2600,12 +2601,12 @@ double disto_to_minimize_Equiproj(std::vector<double> &X) {
 
       nbval++;
 
-      //undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), A1x, A1y);
+      // undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), A1x, A1y);
       A1x = (double)(grain[igrain].refcoord_xpix);
       A1y = (double)(grain[igrain].refcoord_ypix);
       undistor(&X[0], (double)(grain[igrain].refcoord_xpix + dx_corrDisto[i_image][igrain]),
                (double)(grain[igrain].refcoord_ypix + dy_corrDisto[i_image][igrain]), A2x, A2y);
-      //undistor(&X[0], (double)(grain[jgrain].refcoord_xpix), (double)(grain[jgrain].refcoord_ypix), B1x, B1y);
+      // undistor(&X[0], (double)(grain[jgrain].refcoord_xpix), (double)(grain[jgrain].refcoord_ypix), B1x, B1y);
       B1x = (double)(grain[jgrain].refcoord_xpix);
       B1y = (double)(grain[jgrain].refcoord_ypix);
       undistor(&X[0], (double)(grain[jgrain].refcoord_xpix + dx_corrDisto[i_image][jgrain]),
@@ -2616,23 +2617,22 @@ double disto_to_minimize_Equiproj(std::vector<double> &X) {
       double AB = sqrt(ABx * ABx + ABy * ABy);
       ABx /= AB;
       ABy /= AB;
-      
+
       BBx = B2x - B1x;
       BBy = B2y - B1y;
       AAx = A2x - A1x;
       AAy = A2y - A1y;
-      
+
       // version sum(err)
-      
-      
+
       // on prend seulement la plus grande erreur en valeur absolue
-      val = (ABx * (BBx - AAx)) + (ABy * (BBy - AAy)) ; 
+      val = (ABx * (BBx - AAx)) + (ABy * (BBy - AAy));
       func += val * val;
-      //if (val > func) func = val;
+      // if (val > func) func = val;
     }
   }
-   // return fabs(func);
-   return (func);
+  // return fabs(func);
+  return (func);
 }
 
 double Equiproj_Error_Computation(std::vector<double> &X) {
@@ -2662,10 +2662,10 @@ double Equiproj_Error_Computation(std::vector<double> &X) {
       BBy = B2y - B1y;
       AAx = A2x - A1x;
       AAy = A2y - A1y;
-      
+
       // version sum(err)
       func += abs((ABx * (BBx - AAx)) + (ABy * (BBy - AAy)));
-      }
+    }
   }
   return func;
 }
@@ -2720,7 +2720,9 @@ void correction_distortion() {
       grain[igrain].reset();
       follow_pattern_pixel(igrain);
 #pragma omp critical
-      { loadbar(++progress, grain.size()); }
+      {
+        msg::loadbar(++progress, grain.size());
+      }
     }
     std::cerr << std::endl;
     fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
@@ -2737,7 +2739,9 @@ void correction_distortion() {
     for (igrain = 0; igrain < num_grains; igrain++) {
       follow_pattern_subpixel_xyR(igrain);
 #pragma omp critical
-      { loadbar(++progress, grain.size()); }
+      {
+        msg::loadbar(++progress, grain.size());
+      }
     }
     std::cerr << std::endl;
     fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
@@ -2820,8 +2824,10 @@ void correction_distortion() {
       undistor(&disto_parameters[0], xd, yd, xu, yu);
       double xerr = xu - xd;
       double yerr = yu - yd;
-      if (fabs(xerr) > xerrormax) xerrormax = fabs(xerr);
-      if (fabs(yerr) > yerrormax) yerrormax = fabs(yerr);
+      if (fabs(xerr) > xerrormax)
+        xerrormax = fabs(xerr);
+      if (fabs(yerr) > yerrormax)
+        yerrormax = fabs(yerr);
       errorFile << xd << " " << yd << " " << xerr << " " << yerr << std::endl;
     }
     errorFile << std::endl;
@@ -2830,7 +2836,7 @@ void correction_distortion() {
   logfile << "yerrormax                " << yerrormax << std::endl;
   std::cout << "xerrormax                " << xerrormax << std::endl;
   std::cout << "yerrormax                " << yerrormax << std::endl;
-  
+
   std::ofstream errorBoxFile("errorbox.dat");
   yd = 0;
   for (xd = 0; xd < dimx; xd += dxd) {
@@ -3093,14 +3099,43 @@ void SolidMotionError(double &angle, double &xc, double &yc, double &xtrans, dou
   stddev /= (double)num_grains;
 }
 
-
-// #######
-//#include "grayLevelAnalysis.cpp"
 /************************************************************************************************/
 /*                                     GRAY LEVEL ANALYSIS                                      */
 /************************************************************************************************/
 
-#include "moment.hpp"
+//#include "moment.hpp"
+
+
+
+void moment(std::vector<double> &data, data_stat &stat) {
+  size_t n = data.size();
+
+  if (n <= 1)
+    std::cerr << "@moment, number of data too small (min = 2)\n";
+  double s = 0.0;
+  for (size_t j = 0; j < n; j++)
+    s += data[j];
+  stat.ave = s / (double)n;
+  stat.adev = stat.var = stat.skew = stat.curt = 0.0;
+  double ep = 0.0;
+  double p = 0.0;
+  for (size_t j = 0; j < n; j++) {
+    stat.adev += fabs(s = data[j] - stat.ave);
+    ep += s;
+    stat.var += (p = s * s);
+    stat.skew += (p *= s);
+    stat.curt += (p *= s);
+  }
+  stat.adev /= (double)n;
+  stat.var = (stat.var - ep * ep / (double)n) / (double)(n - 1);
+  stat.sdev = sqrt(stat.var);
+  if (stat.var != 0.0) {
+    stat.skew /= (double)(n * stat.var * stat.sdev);
+    stat.curt = stat.curt / (double)(n * stat.var * stat.var) - 3.0;
+  } else
+    std::cerr << "@moment, No skew/kurtosis when variance = 0 (in moment)\n";
+}
+
 
 void gray_level_analysis() {
   std::cout << "GRAY LEVEL ANALYSIS" << std::endl;
@@ -3139,7 +3174,7 @@ void gray_level_analysis() {
       file[igrain] << num_image << " " << stat.ave << " " << stat.adev << " " << stat.sdev << " " << stat.var << " "
                    << stat.skew << " " << stat.curt << " " << min << " " << max << '\n';
       // 1. image number
-      // 2. average 
+      // 2. average
       // 3. absolut deviation
       // 4. standard deviation
       // 5. variance
@@ -3151,8 +3186,6 @@ void gray_level_analysis() {
   }
 }
 
-// #######
-//#include "pattern_quality.cpp"
 /************************************************************************************************/
 /*                     DETERMINATION OF PATTERN QUALITY FOR CORRELATIONS                        */
 /************************************************************************************************/
@@ -3269,11 +3302,6 @@ void pattern_quality() {
   }
 }
 
-
-
-
-// #######
-//#include "post_process.cpp"
 /************************************************************************************************/
 /*                                     POST PROCESSING                                          */
 /************************************************************************************************/
@@ -3318,7 +3346,7 @@ struct process_data {
   double Gxx, Gxy, Gyx, Gyy;
   double Exx, Exy, Eyx, Eyy;
 
-  std::vector<grain_type_2D> gr;
+  std::vector<Grain> gr;
   std::vector<sensor_data> sensor;
 
   std::vector<processed_point> pt;      // The points corresponding to sample elements
@@ -3559,9 +3587,6 @@ void post_process() {
   } // for loop over files
 }
 
-
-// #######
-//#include "subpixel_centers.cpp"
 /************************************************************************************************/
 /*                 DETERMINATION OF PARTICLE CENTERS WITH SUBPIXEL ACCURACY                     */
 /************************************************************************************************/
@@ -3679,9 +3704,6 @@ void find_subpixel_centers() {
   } // for loop igrain
 }
 
-
-// #######
-//#include "synthetic_images.cpp"
 /************************************************************************************************/
 /*                                SYNTHETIC IMAGE GENERATION                                    */
 /************************************************************************************************/
@@ -3764,14 +3786,11 @@ void generate_synthetic_images(int w, int h, double zoom, int octaves, double p,
   char fname[256];
   sprintf(fname, "synth_oct%d_p%.1f_z%.1f_%d.tif", octaves, (float)p, (float)zoom, num_image_synth++);
   std::cout << "def = (" << defx << ", " << defy << "),"
-       << " trans = (" << transy_pix << ", " << transy_pix << "), rot = " << rot_deg << " deg. -> " << fname
-       << std::endl;
+            << " trans = (" << transy_pix << ", " << transy_pix << "), rot = " << rot_deg << " deg. -> " << fname
+            << std::endl;
   synth_im.writeTiff(fname, 0.0);
 }
 
-
-// #######
-//#include "visu_process.cpp"
 /************************************************************************************************/
 /*                                        VISU PROCESS                                          */
 /************************************************************************************************/
@@ -3830,7 +3849,7 @@ void visu_process() {
 
   int num_image;
   char fname[256];
-  std::vector<grain_type_2D> grain_ref;
+  std::vector<Grain> grain_ref;
 
   sprintf(fname, dic_name, iref);
   fprintf(stdout, "\n____ ref DIC file %s\n", fname);
@@ -4168,7 +4187,7 @@ void visu_process() {
             data.push_back(0.0);
           }
         }
-      }      // End strain computation
+      } // End strain computation
       else { // no strain computation is required
 
         // Compute data asked by the user
@@ -4207,8 +4226,8 @@ void visu_process() {
             colorMax = data[i];
         }
         ct.setMinMax(colorMin, colorMax);
-        LOG("ColorScale / " << visu_output << " / im = " << num_image << " / min = " << colorMin
-                            << " / max = " << colorMax << std::endl);
+        TRACKER_LOG("ColorScale / " << visu_output << " / im = " << num_image << " / min = " << colorMin
+                                    << " / max = " << colorMax << std::endl);
       }
 
       int p0x, p1x, p2x, p3x;
@@ -4305,8 +4324,8 @@ void visu_process() {
           if (data[i] > colorMax)
             colorMax = data[i];
         }
-        SHOW(colorMin);
-        SHOW(colorMax);
+        TRACKER_SHOW(colorMin);
+        TRACKER_SHOW(colorMax);
         ct.setMinMax(colorMin, colorMax);
       }
 
@@ -4328,7 +4347,7 @@ void visu_process() {
     }
 
     sprintf(fname, "Visu_%s_%d.ppm", visu_output.c_str(), num_image);
-    //thumb.writePpm(fname, visu_alpha);
+    // thumb.writePpm(fname, visu_alpha);
     thumb.writeTiff(fname, visu_alpha);
   } // End loop over files (image and dic_out_x.txt)
 }

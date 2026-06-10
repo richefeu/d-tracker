@@ -5,6 +5,10 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  IMAGE_INTERPOLATOR_LINEAR.image = &image;
+  IMAGE_INTERPOLATOR_CUBIC.image = &image;
+  IMAGE_INTERPOLATOR_QUINTIC.image = &image;
+
   if (procedure == "correction_distortion") {
     correction_distortion();
   } else if (procedure == "correction_distortion_grid") {
