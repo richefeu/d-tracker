@@ -11,8 +11,9 @@ guifont.ttf
 guifont_ttf.h
 toofus/
 
-# Fichier de configuration genere par tracker-gui
+# Fichiers generes par tracker-gui (a l'execution, dans le repertoire de donnees)
 tracker-gui.ini
+dic_corrections.txt
 
 # Divers macOS
 .DS_Store

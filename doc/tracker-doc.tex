@@ -9,7 +9,7 @@
 \newcommand{\scr}[1]{\texttt{\color{myblue}#1}}
 \newcommand{\key}[1]{\fbox{\color{myblue}#1}}
 
-\title{\textsc{Tracker} -- Documentation}
+\title{\textsc{Tracker} -- Documentation (CLI)}
 \author{
 \textbf{Vincent Richefeu} $\langle$Vincent.Richefeu@3sr-grenoble.fr$\rangle$\\
 \textbf{Ga\"{e}l Combe} $\langle$Gael.Combe@3sr-grenoble.fr$\rangle$\\
@@ -183,7 +183,7 @@ x2  y2  rot2  r2
 where $N$ is the number of points, $(x_i, y_i)$ are pixel coordinates (integers) on the reference
 image, $\mathrm{rot}_i$ is the initial orientation in radians, and $r_i$ is the radius in pixels.
 
-\attention The $y$ axis points downward (top of the image is $y=0$).
+\attention{\color{red} The $y$ axis points downward (top of the image is $y=0$).}
 
 By convention, corners are assigned $r=1$ and fixed reference points $r=2$;
 these special radii are used by the post-processing step to distinguish

@@ -1,0 +1,435 @@
+\documentclass{simpledoc}
+
+
+\newcommand{\soft}{\textsc{d-Tracker}}
+\newcommand{\gui}{\screen{tracker-gui}}
+\newcommand{\cli}{\screen{tracker}}
+\newcommand{\var}[1]{{\color{myblue}$\langle$#1$\rangle$}}
+\newcommand{\opt}[1]{\color{myblue}$[$#1$]$}
+\newcommand{\file}[1]{\textit{\color{myblue}#1}}
+\newcommand{\screen}[1]{\texttt{\color{myblue}#1}}
+\newcommand{\scr}[1]{\texttt{\color{myblue}#1}}
+\newcommand{\key}[1]{\fbox{\color{myblue}#1}}
+
+% Placeholder for a screenshot that will be inserted later.
+% The argument is a short description of what the figure should show.
+\newcommand{\screenshot}[2]{%
+  \begin{figure}[H]
+  \centering
+  \fbox{\parbox[c][4.5cm][c]{0.8\textwidth}{\centering\color{myblue}%
+    \textit{[ screenshot placeholder ]}\\[4pt]#2}}
+  \caption{#1}
+  \end{figure}}
+
+\title{\textsc{Tracker-gui} -- Documentation}
+\author{
+\textbf{Vincent Richefeu} $\langle$Vincent.Richefeu@3sr-grenoble.fr$\rangle$\\
+\textbf{Ga\"{e}l Combe} $\langle$Gael.Combe@3sr-grenoble.fr$\rangle$\\
+Laboratoire 3SR, Universit\'{e} Grenoble Alpes, France
+}
+\date{Version 2026}
+
+\pagestyle{myfootings}
+\markboth{Tracker-gui, user guide}%
+         {Tracker-gui, user guide}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document describes \gui, the graphical companion application of \soft.
+It explains how to launch the interface, how to navigate a set of digital image correlation (DIC)
+results, how to colour and inspect the tracked points, and how to use it to run procedures and to
+prepare manual corrections.
+This documentation is a work in progress and will be extended as the application evolves; it
+nevertheless aims to be complete for the current version.
+\end{abstract}
+
+\tableofcontents
+
+\newpage
+
+% ============================================================
+\section{Introduction}
+
+\soft\ is dedicated to 2D digital image correlation. The reference tool of the suite is the
+command-line application \cli, fully described in the companion document \emph{Tracker --
+Documentation}. \textbf{The CLI is the program that does the actual work}: it reads a command file
+(\file{.trk}), runs the selected procedure (particle tracking, distortion correction, sub-pixel
+centring, pattern quality, gray-level analysis, visualization, post-processing), and writes the
+result files.
+
+\gui\ is an \emph{assistant} built on top of the same engine. It does not replace the CLI and it does
+not implement any new correlation algorithm of its own: both binaries are linked against the same
+static library \screen{libtracker.a}, so a procedure launched from the GUI behaves exactly as if it
+had been launched from \cli. The role of the GUI is to:
+
+\begin{itemize}
+  \item \textbf{visualize} the tracked points and the DIC results on top of the images,
+  \item \textbf{inspect and tune} parameters (search zones, patterns, colouring of fields),
+  \item \textbf{run} a procedure on the current command file and reload the results,
+  \item \textbf{assist manual corrections} of grains that were poorly tracked.
+\end{itemize}
+
+\attention
+{\color{red} This code is designed for academic research. To be used with your own responsibility.}
+
+\screenshot{General view of \gui: the 2D viewport on the left and the control panel on the right.}
+{Full window with a set of grains coloured by NCC over a speckle image, the right-hand control panel
+visible, and the floating information card at the top left.}
+
+% ============================================================
+\section{Building and launching}
+
+\gui\ is built together with \cli. From the \file{src} folder, type:
+
+\begin{verbatim}
+$ make
+\end{verbatim}
+
+\noindent The \file{Makefile} downloads the required single-header libraries
+(\screen{raygui.h}, \screen{rini.h}) and the embedded \textsc{Open Sans} font, then produces two
+binaries: \cli\ (the CLI) and \gui\ (the graphical assistant). The GUI is based on the
+\screen{raylib}/\screen{raygui} libraries.
+
+The application is launched with a command file as its single argument, exactly the same
+\file{.trk} file that \cli\ uses:
+
+\begin{verbatim}
+$ tracker-gui <command_file>
+\end{verbatim}
+
+\noindent The command file is parsed at start-up (through the same \screen{init()} routine as the CLI),
+so all parameters (image names, DIC names, reference image, search zones, pattern shape, procedure,
+etc.) are read from it. It is therefore convenient to run \gui\ from the working directory that
+contains the images and the \file{dic\_out\_*.txt} files.
+
+\attention Running \gui\ with no argument (or more than one) prints a usage message and exits.
+
+% ============================================================
+\section{The interface at a glance}
+
+The window is split into two regions:
+
+\begin{itemize}
+  \item a large \textbf{2D viewport} on the left, where the images, grains, patterns, search zones and
+        positions are drawn;
+  \item a \textbf{control panel} on the right, organized in labelled sections\\ (\scr{NAVIGATION},
+        \scr{COLORING}, \scr{POSITIONS}, \scr{BACKGROUND IMAGE},\\ \scr{COMPUTATION}, \scr{CORRECTIONS},
+        \scr{SETTINGS}).
+\end{itemize}
+
+Floating rounded ``cards'' overlay the viewport with contextual information:
+
+\begin{itemize}
+  \item a card at the top left shows the current DIC (or image) number and the number of grains;
+  \item when a grain is selected, an \textbf{inspector} card lists all its quantities (see
+        Section~\ref{sec:inspector});
+  \item when search zones are shown and a grain is selected, a legend card at the bottom left lists the
+        normal, rescue and super-rescue zone dimensions;
+  \item a vertical \textbf{colour bar} appears at the top right when a field (other than \scr{grey}) is
+        used for colouring.
+\end{itemize}
+
+Most actions are available both as a button in the panel and as a keyboard shortcut; the shortcut
+letter is recalled in parentheses on the corresponding button.
+
+% ============================================================
+\section{Navigation}
+\label{sec:navigation}
+
+The viewport uses a 2D camera with pan and zoom. The coordinate system is the full-resolution pixel
+system of the reference image, with the $y$ axis pointing downward (top of the image is $y=0$), as in
+the CLI.
+
+\begin{center}
+\begin{tabular}{lp{7cm}}
+\hline
+\textbf{Action} & \textbf{Effect} \\
+\hline
+Mouse wheel              & Zoom in/out, centred on the cursor. \\
+Right or middle drag     & Pan the view. \\
+Left click               & Select the grain under the cursor (outside correction mode). \\
+\key{F}                  & Fit the view to all grains. \\
+\key{$\leftarrow$} / \key{$\rightarrow$} & Go to the previous / next DIC file (step \scr{iinc}). \\
+\hline
+\end{tabular}
+\end{center}
+
+The \scr{NAVIGATION} section of the panel offers the equivalent \screen{Prev}, \screen{Next} and
+\screen{Fit view} buttons. Stepping moves by \scr{iinc} (the increment read from the command file), or
+by 1 if \scr{iinc} is not set.
+
+% ============================================================
+\section{Keyboard shortcuts}
+\label{sec:shortcuts}
+
+Letter shortcuts are read as \emph{typed characters} rather than physical key codes, so they work
+identically on QWERTY and AZERTY keyboards.
+
+\begin{center}
+\begin{tabular}{lp{8.5cm}}
+\hline
+\textbf{Key} & \textbf{Action} \\
+\hline
+\key{F} & Fit the view to all grains. \\
+\key{G} & Show / hide the grains (when hidden, grains are drawn as fixed-size screen crosses). \\
+\key{P} & Show / hide the correlation pattern of the grains. \\
+\key{Z} & Show / hide the search zones. \\
+\key{R} & Show / hide the reference / previous / current positions and the rotation indicator. \\
+\key{B} & Show / hide the background image. \\
+\key{T} & Open the read-only command-file (\file{.trk}) viewer. \\
+\key{C} & Enter / leave the manual correction mode for the selected grain. \\
+\key{Enter} & In correction mode, register the candidate pose as a correction. \\
+\key{Esc} & Close the \file{.trk} viewer if open; otherwise leave correction mode; otherwise quit. \\
+\key{$\leftarrow$}/\key{$\rightarrow$} & Previous / next DIC file. \\
+\hline
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Colouring the tracked points}
+\label{sec:coloring}
+
+The \scr{COLORING} section selects which field is mapped to the colour of each grain. The choice is
+made through a grid of toggle buttons (two columns). The available fields are:
+
+\begin{center}
+\begin{tabular}{lp{8cm}}
+\hline
+\textbf{Field} & \textbf{Meaning} \\
+\hline
+\scr{grey}        & No field: grains are drawn in a neutral colour (no colour bar). \\
+\scr{NCC}         & Best NCC of the first search. \\
+\scr{NCC\_rescue} & Best NCC after rescue. \\
+\scr{NCC\_subpix} & NCC after sub-pixel refinement. \\
+\scr{dx}, \scr{dy}     & Cumulated displacement components from the reference (pixels). \\
+\scr{drot}        & Cumulated rotation from the reference (radians). \\
+\scr{upix}, \scr{vpix} & Displacement increment from the previous image (pixels). \\
+\scr{rot\_inc}    & Rotation increment from the previous image (radians). \\
+\hline
+\end{tabular}
+\end{center}
+
+The three NCC fields are mapped over the range $[\scr{NCC\_min}, 1]$, where the lower bound is set by
+a slider (\scr{ncc\_min}). The other fields use an automatic min/max range computed over the visible
+grains; the bounds are displayed below the grid. A vertical colour bar is drawn at the top right of
+the viewport for every field except \scr{grey}.
+
+\marginlabel{\key{G} \scr{Show / Hide grains}}
+When grains are shown, they are drawn as filled disks (the fill opacity is adjustable with a slider).
+When hidden, each grain is drawn instead as a small fixed-size cross, still coloured by the selected
+field, which keeps the display readable at any zoom level and over dense point clouds.
+
+\screenshot{Grains coloured by a field, with the vertical colour bar.}
+{The viewport with grains coloured by \scr{NCC}, the colour bar visible at the top right, and the
+fill-opacity slider set to a partially transparent value.}
+
+% ============================================================
+\section{Reference, previous and current positions}
+\label{sec:positions}
+
+\marginlabel{\key{R} \scr{Positions}}
+The \scr{POSITIONS} section (shortcut \key{R}) overlays, for each grain (or only for the selected one
+if \screen{Selected grain only} is enabled), three positions linked by a trace:
+
+\begin{itemize}
+  \item the \textbf{reference} position (violet), $(\scr{refcoord\_xpix}, \scr{refcoord\_ypix})$;
+  \item the \textbf{previous} position (orange), i.e.\ the current position minus the last increment
+        $(\scr{upix}, \scr{vpix})$;
+  \item the \textbf{current} position (green), i.e.\ the reference plus the cumulated displacement
+        $(\scr{dx}, \scr{dy})$.
+\end{itemize}
+
+The reference and previous positions are marked with small circles. On the \textbf{current} position,
+a rotation indicator is drawn: a larger green circle with two crossing markers, one at the reference
+orientation \scr{refrot} (violet, un-rotated) and one at the current orientation
+$\scr{refrot}+\scr{drot}$ (green, rotated). A filled circular sector between the two visualizes the
+cumulated rotation \scr{drot}. All these markers have a fixed screen size, so they remain visible at
+any zoom. The legend colours are recalled in the panel.
+
+\screenshot{Positions and rotation indicator of a grain.}
+{A zoomed-in view of one grain showing the violet reference marker, the orange previous marker, the
+green current marker with its rotation sector, and the connecting trace.}
+
+% ============================================================
+\section{Pattern and search zones}
+
+\marginlabel{\key{P} \scr{Show / Hide pattern}}
+The correlation pattern is the set of pixels of the reference image used for matching. It is not
+stored in the DIC files: it is rebuilt by the engine from the command file (the \scr{pattern} shape)
+into the internal grain structure, and \gui\ reads it directly. When the true pattern is not
+available for a grain, a fixed-size square fallback is drawn instead.
+
+\marginlabel{\key{Z} \scr{Show / Hide search zones}}
+The search zones (normal, rescue, super-rescue) are the pixel-resolution displacement windows defined
+in the command file. When shown and a grain is selected, the dimensions and rotation parameters of the
+three zones are listed in a legend card (colour-coded green / orange / red) at the bottom left.
+
+% ============================================================
+\section{Selected-grain inspector}
+\label{sec:inspector}
+
+Left-clicking a grain selects it. The selection is persistent across navigation and a dedicated
+inspector card lists every quantity of the grain:
+
+\begin{itemize}
+  \item \scr{index} and, for results read from a DIC file, the corresponding \scr{file line} and file
+        name (\file{dic\_out\_\textit{n}.txt});
+  \item \scr{refcoord} (reference pixel position), \scr{radius}, \scr{refrot};
+  \item \scr{position} (current position), \scr{dx}, \scr{dy}, \scr{drot};
+  \item \scr{upix}, \scr{vpix}, \scr{rot\_inc};
+  \item \scr{NCC}, \scr{NCC\_rescue}, \scr{NCC\_subpix};
+  \item the number of \scr{pattern} points, when the pattern is available.
+\end{itemize}
+
+These are precisely the thirteen columns of the DIC output file (see the CLI documentation), shown for
+the selected grain. When the grain radius is not stored, an effective radius is computed for display.
+
+% ============================================================
+\section{Background image}
+
+\marginlabel{\key{B} \scr{Show / Hide image}}
+The \scr{BACKGROUND IMAGE} section overlays the actual image behind the grains, which is useful to
+check the placement of the patterns and the quality of the tracking. The image is read through the
+same TIFF / raw readers as the engine. A sub-sampling factor (\scr{image\_div}) reduces memory and
+loading time for large images; the thumbnail is scaled back so that the grains, expressed in
+full-resolution pixels, remain correctly aligned.
+
+\attention The background follows the current DIC number, so stepping through the images updates the
+displayed picture accordingly.
+
+% ============================================================
+\section{Command-file viewer}
+
+\marginlabel{\key{T} \scr{View .trk}}
+Pressing \key{T} (or the \screen{View .trk} button) opens a read-only overlay showing the full content
+of the command file passed on the command line. The text is scrollable with the mouse wheel; \key{T}
+or \key{Esc} closes it. This is a convenient reminder of the parameters currently in effect, without
+leaving the application.
+
+% ============================================================
+\section{Running a procedure}
+\label{sec:run}
+
+\marginlabel{\scr{COMPUTATION}}
+The \scr{COMPUTATION} section contains a single \screen{Run} button whose label is adapted to the
+\scr{procedure} declared in the command file (for example \screen{Run tracking},
+\screen{Correct distortion}, \screen{Find centers}, \screen{Pattern quality},\\ \screen{Generate visu},
+\screen{Gray analysis}, \screen{Post-process}). Pressing it dispatches to exactly the same procedure
+function as \cli\ would call.
+
+Around the run, \gui\ takes a snapshot of the working directory, so that the files \emph{produced or
+modified} by the procedure can be detected. A summary banner reports them for a few seconds. The
+spatial results are then reloaded automatically:
+
+\begin{enumerate}
+  \item the \file{dic\_out\_\textit{n}.txt} of the current number, if present;
+  \item otherwise \file{recentered.data} (produced by \scr{find\_subpixel\_centers});
+  \item otherwise the grains held in the engine's global state.
+\end{enumerate}
+
+If the background was displayed, it is reloaded as well.
+
+\attention The run is currently \emph{synchronous}: the window is unresponsive while a long procedure
+is computing. Asynchronous execution is planned (see Section~\ref{sec:limitations}).
+
+% ============================================================
+\section{Manual corrections}
+\label{sec:corrections}
+
+DIC occasionally mismatches a grain (for example in low-texture regions or near large displacements).
+\gui\ helps to fix such grains one by one.
+
+\marginlabel{\key{C} \scr{Correct selected}}
+Select the offending grain, then press \key{C} (or \screen{Correct selected}) to enter correction
+mode. In this mode you manually place the correct pose of the grain on the deformed image:
+
+\begin{center}
+\begin{tabular}{lp{8cm}}
+\hline
+\textbf{Action} & \textbf{Effect} \\
+\hline
+Left drag        & Translate the candidate pose ($dx$, $dy$). \\
+\key{Shift}+wheel & Rotate the candidate pose ($d\theta$, about $0.5^{\circ}$ per notch). \\
+\key{Enter}      & Register the candidate as a correction. \\
+\key{C} / \key{Esc} & Leave correction mode. \\
+\hline
+\end{tabular}
+\end{center}
+
+A magenta preview shows the candidate pose while you adjust it. Registered corrections are collected
+in a list (de-duplicated per (DIC, grain) pair) and shown in the \scr{CORRECTIONS} section. The
+\screen{Save file} button writes them to \file{dic\_corrections.txt}, one correction per line, in the
+format:
+
+\begin{verbatim}
+dic  grain  dx  dy  drot
+\end{verbatim}
+
+\noindent where \scr{drot} is in radians. The \screen{Clear} button empties the list.
+
+\attention \textbf{Important.} In the current version, saving a correction only \emph{records a
+request} in \file{dic\_corrections.txt}. It does \emph{not} re-run the correlation and does
+\emph{not} modify the \file{dic\_out\_*.txt} files. Re-applying the recorded corrections to the DIC
+results (re-running a sub-pixel follow from the corrected pose) is the planned next step
+(Section~\ref{sec:limitations}).
+
+\screenshot{Manual correction of a grain.}
+{Correction mode active on a selected grain, with the magenta candidate preview offset from the
+green current position, and the \scr{CORRECTIONS} list showing one registered entry.}
+
+% ============================================================
+\section{Persistent settings}
+\label{sec:settings}
+
+\gui\ stores cosmetic and display preferences in an INI file named \file{tracker-gui.ini} in the
+current working directory (handled through the \screen{rini} single-header library). The file is read
+at start-up, before the window is created (so that the window size is honoured), and written by the
+\screen{Save settings} button in the \scr{SETTINGS} section.
+
+\begin{center}
+\begin{tabular}{lp{6cm}}
+\hline
+\textbf{Key} & \textbf{Meaning} \\
+\hline
+\scr{window\_\opt{width|height}}          & Window size in pixels. \\
+\scr{widget\_font\_size}                  & Font size of the widgets. \\
+\scr{widget\_button\_height}              & Height of buttons and toggles. \\
+\scr{widget\_slider\_height}              & Height of sliders. \\
+\scr{widget\_label\_height}               & Vertical step between text lines. \\
+\scr{marker\_radius}                      & Base size of the screen markers. \\
+\scr{marker\_rotation\_radius}            & Size of the rotation indicator. \\
+\scr{marker\_fallback\_radius}            & Default grain radius when none is stored. \\
+\scr{image\_div}                          & Sub-sampling factor of the background image. \\
+\scr{color\_field}                        & Index of the colouring field. \\
+\scr{show\_*}                             & Display toggles. \\
+\scr{ncc\_min}                            & Lower bound of the NCC colour range $[0,1]$. \\
+\scr{fill\_opacity}                       & Opacity of the grain fill $[0,1]$. \\
+\hline
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Limitations and roadmap}
+\label{sec:limitations}
+
+\gui\ is under active development. Known limitations and planned features include:
+
+\begin{itemize}
+  \item \textbf{Apply manual corrections.} Re-run a sub-pixel follow from a corrected pose and update
+        the \file{dic\_out\_*.txt} files (with a backup), so that corrections recorded in
+        \file{dic\_corrections.txt} actually take effect.
+  \item \textbf{Display produced images.} Show the images generated by\\ \scr{visu\_process}
+        (\file{Visu\_*.tiff}) directly in the viewport.
+  \item \textbf{Asynchronous runs.} Keep the interface responsive while a procedure is computing.
+\end{itemize}
+
+As the engine and the GUI evolve, this documentation will be extended accordingly. For everything
+related to the procedures themselves, the parameters of the command file and the output formats, refer
+to the companion document \emph{Tracker -- Documentation}.
+
+\end{document}

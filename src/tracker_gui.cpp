@@ -160,6 +160,18 @@ static bool trajSelectedOnly = false;// limiter la trace au grain selectionne
 static bool showPattern = false;     // superposer le pattern correle sur chaque grain
 static bool showSearchZones = false; // afficher les zones de recherche du grain selectionne
 
+// Corrections manuelles : mode placement (brique A) + liste a sauvegarder (strategie 2).
+// candDx/candDy en pixels, candDrot en radians (meme conventions que dx/dy/drot).
+struct GrainCorrection {
+  int dicNum, grainIdx;
+  double dx, dy, drot;
+};
+static std::vector<GrainCorrection> g_corrections;
+static const char *CORRECTIONS_FILE = "dic_corrections.txt";
+static bool correctionMode = false; // placement manuel du grain selectionne en cours
+static int correctionGrain = -1;    // indice du grain en cours de correction
+static double candDx = 0.0, candDy = 0.0, candDrot = 0.0; // pose candidate (dx, dy, drot)
+
 // Visualiseur (lecture seule) du fichier de commande .trk
 static bool showTrk = false;
 static std::string g_trkPath;
@@ -695,6 +707,40 @@ static void drawTrajectories(float zoom) {
   }
 }
 
+// Apercu (magenta) de la pose candidate pendant une correction manuelle : pattern (ou
+// cercle) place a (refcoord + candDx, candDy) et tourne de (refrot + candDrot), plus une
+// croix d'orientation de taille fixe a l'ecran. A dessiner dans BeginMode2D.
+static void drawCorrectionCandidate(float zoom) {
+  if (!correctionMode || correctionGrain < 0 || correctionGrain >= (int)g_grains.size())
+    return;
+  const GuiGrain &g = g_grains[correctionGrain];
+  double cx = g.refcoord_xpix + candDx;
+  double cy = g.refcoord_ypix + candDy;
+  double ang = g.refrot + candDrot;
+  double ca = cos(ang), sa = sin(ang);
+  const Color col = {220, 40, 200, 255}; // magenta
+
+  if (correctionGrain < (int)grain.size() && !grain[correctionGrain].pattern.empty()) {
+    Color fill = col;
+    fill.a = 150;
+    for (const relative_coord_type &p : grain[correctionGrain].pattern) {
+      double rx = p.dx * ca - p.dy * sa, ry = p.dx * sa + p.dy * ca;
+      DrawRectangleV({(float)(cx + rx - 0.5), (float)(cy + ry - 0.5)}, {1.0f, 1.0f}, fill);
+    }
+  } else {
+    DrawCircleLinesV({(float)cx, (float)cy}, (float)effectiveRadius(correctionGrain), col);
+  }
+
+  // Croix d'orientation (taille fixe a l'ecran) materialisant candDrot.
+  float r = (zoom > 0.0f) ? 8.0f / zoom : 8.0f;
+  float th = (zoom > 0.0f) ? 1.6f / zoom : 1.6f;
+  for (int k = 0; k < 2; ++k) {
+    float a = (float)ang + (float)(M_PI / 4.0) + k * (float)(M_PI / 2.0);
+    Vector2 d = {cosf(a) * r, sinf(a) * r};
+    DrawLineEx({(float)cx - d.x, (float)cy - d.y}, {(float)cx + d.x, (float)cy + d.y}, th, col);
+  }
+}
+
 // Dessine le pattern (zone de pixels correlee) place sur chaque grain.
 //
 // Le pattern n'est pas stocke dans les fichiers dic_out : il provient de la commande
@@ -776,6 +822,75 @@ static void pickGrain(Vector2 world) {
       iSelected = (int)i;
       return;
     }
+  }
+}
+
+// ================================================================================
+// Corrections manuelles (brique A : placement ; strategie 2 : fichier)
+// ================================================================================
+
+static void enterCorrectionMode() {
+  if (iSelected < 0 || iSelected >= (int)g_grains.size())
+    return;
+  correctionMode = true;
+  correctionGrain = iSelected;
+  candDx = g_grains[iSelected].dx; // pose candidate initialisee a la pose courante
+  candDy = g_grains[iSelected].dy;
+  candDrot = g_grains[iSelected].drot;
+}
+
+static void exitCorrectionMode() {
+  correctionMode = false;
+  correctionGrain = -1;
+}
+
+// Enregistre la pose candidate pour (DIC courant, grain) ; remplace si deja presente.
+static void addCorrection() {
+  if (!correctionMode || correctionGrain < 0)
+    return;
+  GrainCorrection c{g_dicNum, correctionGrain, candDx, candDy, candDrot};
+  bool replaced = false;
+  for (auto &e : g_corrections) {
+    if (e.dicNum == c.dicNum && e.grainIdx == c.grainIdx) {
+      e = c;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced)
+    g_corrections.push_back(c);
+  g_resultLines = {TextFormat("Correction %s : DIC %d  grain %d", replaced ? "updated" : "added", c.dicNum, c.grainIdx)};
+  g_resultUntil = GetTime() + 2.0;
+}
+
+// Ecrit la liste des corrections (format tolerant : lignes '#' + 5 colonnes par ligne).
+static void saveCorrections() {
+  std::ofstream f(CORRECTIONS_FILE);
+  if (!f) {
+    TraceLog(LOG_WARNING, "Cannot write %s", CORRECTIONS_FILE);
+    return;
+  }
+  f << "# d-tracker - demandes de correction manuelle de grains\n";
+  f << "# colonnes: dic_number grain_number dx_approx dy_approx drot_approx(rad)\n";
+  for (const auto &c : g_corrections)
+    f << c.dicNum << ' ' << c.grainIdx << ' ' << TextFormat("%.9g %.9g %.9g", c.dx, c.dy, c.drot) << '\n';
+  g_resultLines = {TextFormat("Saved %d correction(s) -> %s", (int)g_corrections.size(), CORRECTIONS_FILE)};
+  g_resultUntil = GetTime() + 2.5;
+}
+
+// Recharge la liste depuis le fichier au demarrage (pour cumuler entre sessions).
+static void loadCorrections() {
+  std::ifstream f(CORRECTIONS_FILE);
+  if (!f)
+    return;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#')
+      continue;
+    std::istringstream is(line);
+    GrainCorrection c{};
+    if (is >> c.dicNum >> c.grainIdx >> c.dx >> c.dy >> c.drot)
+      g_corrections.push_back(c);
   }
 }
 
@@ -1027,6 +1142,8 @@ static void drawResultBanner(int viewW, int sh) {
 // ================================================================================
 
 static void gotoDIC(int num) {
+  if (correctionMode)
+    exitCorrectionMode(); // une correction est propre a un DIC : on quitte le mode
   if (iinc != 0) {
     if (num < ibeg)
       num = ibeg;
@@ -1077,7 +1194,8 @@ int main(int argc, char *argv[]) {
     g_dicNum = (iref > 0) ? iref : 1; // numero d'image de reference (pour le fond)
   }
 
-  loadConfig(); // parametres persistants (taille fenetre, cosmetique, affichages) avant InitWindow
+  loadConfig();      // parametres persistants (taille fenetre, cosmetique, affichages) avant InitWindow
+  loadCorrections(); // liste de corrections eventuellement accumulee lors d'une session precedente
   SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
   InitWindow(cfgWinW, cfgWinH, "D-TRACKER GUI");
   SetWindowMinSize(900, 600);
@@ -1129,16 +1247,20 @@ int main(int argc, char *argv[]) {
         showTrk = false;
     } else {
       if (overView) {
-        // Zoom molette centre sur le curseur
         float wheel = GetMouseWheelMove();
         if (wheel != 0) {
-          Vector2 worldBefore = GetScreenToWorld2D(mouse, cam);
-          cam.zoom *= (wheel > 0) ? 1.1f : (1.0f / 1.1f);
-          if (cam.zoom < 1e-6f)
-            cam.zoom = 1e-6f;
-          Vector2 worldAfter = GetScreenToWorld2D(mouse, cam);
-          cam.target.x += worldBefore.x - worldAfter.x;
-          cam.target.y += worldBefore.y - worldAfter.y;
+          if (correctionMode && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
+            candDrot += wheel * 0.5f * DEG2RAD; // Shift+molette : rotation candidate (~0.5 deg/cran)
+          } else {
+            // Zoom molette centre sur le curseur
+            Vector2 worldBefore = GetScreenToWorld2D(mouse, cam);
+            cam.zoom *= (wheel > 0) ? 1.1f : (1.0f / 1.1f);
+            if (cam.zoom < 1e-6f)
+              cam.zoom = 1e-6f;
+            Vector2 worldAfter = GetScreenToWorld2D(mouse, cam);
+            cam.target.x += worldBefore.x - worldAfter.x;
+            cam.target.y += worldBefore.y - worldAfter.y;
+          }
         }
         // Pan : bouton droit ou milieu
         if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT) || IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
@@ -1146,9 +1268,15 @@ int main(int argc, char *argv[]) {
           cam.target.x -= d.x / cam.zoom;
           cam.target.y -= d.y / cam.zoom;
         }
-        // Selection : clic gauche
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-          pickGrain(GetScreenToWorld2D(mouse, cam));
+        if (correctionMode) {
+          // Placement : le drag gauche deplace la pose candidate (dx, dy).
+          if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 d = GetMouseDelta();
+            candDx += d.x / cam.zoom;
+            candDy += d.y / cam.zoom;
+          }
+        } else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+          pickGrain(GetScreenToWorld2D(mouse, cam)); // selection
         }
       }
 
@@ -1177,8 +1305,21 @@ int main(int argc, char *argv[]) {
         else
           unloadBackground();
       }
-      if (IsKeyPressed(KEY_ESCAPE))
-        break; // ESC quitte l'application
+      // Corrections : C entre/sort, Entree enregistre la pose candidate.
+      if (typed['c']) {
+        if (correctionMode)
+          exitCorrectionMode();
+        else
+          enterCorrectionMode();
+      }
+      if (correctionMode && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
+        addCorrection();
+      if (IsKeyPressed(KEY_ESCAPE)) {
+        if (correctionMode)
+          exitCorrectionMode(); // Esc sort d'abord du mode correction
+        else
+          break; // sinon ESC quitte l'application
+      }
     }
 
     // ---- Dessin ----
@@ -1200,6 +1341,7 @@ int main(int argc, char *argv[]) {
       drawPatterns();
     if (showSearchZones)
       drawSearchZones(cam.zoom);
+    drawCorrectionCandidate(cam.zoom); // apercu de la pose en cours de correction
 
     EndMode2D();
     EndScissorMode();
@@ -1363,6 +1505,36 @@ int main(int argc, char *argv[]) {
     y += 30;
     if (GuiButton(Rectangle{px, y, pw, BTN_H}, showTrk ? "#10#  Hide .trk  (T)" : "#10#  View .trk  (T)"))
       showTrk = !showTrk;
+    y += BTN_H + 4;
+
+    // ---- Corrections (placement manuel + liste a sauvegarder) ----
+    section("CORRECTIONS");
+    bool canCorrect = (iSelected >= 0) || correctionMode;
+    if (!canCorrect)
+      GuiSetState(STATE_DISABLED); // pas de grain selectionne -> rien a corriger
+    if (GuiButton(Rectangle{px, y, pw, BTN_H}, correctionMode ? "Stop correcting  (C)" : "Correct selected  (C)")) {
+      if (correctionMode)
+        exitCorrectionMode();
+      else
+        enterCorrectionMode();
+    }
+    GuiSetState(STATE_NORMAL);
+    y += BTN_H + 4;
+    if (correctionMode) {
+      uiText(TextFormat("dx %.2f  dy %.2f  rot %.2f deg", candDx, candDy, candDrot * RAD2DEG), px, y, 13, COL_TEXT);
+      y += 15;
+      uiText("drag = move    Shift+wheel = rotate", px, y, 12, COL_MUTED);
+      y += 15;
+      if (GuiButton(Rectangle{px, y, pw, BTN_H}, "Add correction  (Enter)"))
+        addCorrection();
+      y += BTN_H + 4;
+    }
+    uiText(TextFormat("list: %d correction(s)", (int)g_corrections.size()), px, y, 13, COL_MUTED);
+    y += 15;
+    if (GuiButton(Rectangle{px, y, pw / 2 - 4, BTN_H}, "Save file"))
+      saveCorrections();
+    if (GuiButton(Rectangle{px + pw / 2 + 4, y, pw / 2 - 4, BTN_H}, "Clear"))
+      g_corrections.clear();
     y += BTN_H + 4;
 
     // ---- Settings ----
