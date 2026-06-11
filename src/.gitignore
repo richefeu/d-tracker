@@ -1,0 +1,14 @@
+# Binaires et objets compiles
+tracker
+tracker-gui
+libtracker.a
+*.o
+
+# Dependances telechargees / generees par le Makefile
+raygui.h
+guifont.ttf
+guifont_ttf.h
+toofus/
+
+# Divers macOS
+.DS_Store

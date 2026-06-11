@@ -7,6 +7,173 @@
 
 #include "tracker.hpp"
 
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
+
+// Includes "lourds" reserves a l'implementation (voir la note dans tracker.hpp).
+#include "libraw.h"
+#include <tiffio.h>
+
+#include "toofus/ColorTable.hpp"
+#include "toofus/delaunay2D.hpp"
+#include "toofus/message.hpp"
+#include "toofus/powell_nr3.hpp"
+
+#include "thumbnail.hpp"
+
+// =========================================================================================================================
+// GLOBAL VARIABLE DEFINITIONS
+// =========================================================================================================================
+// Les variables sont DECLAREES (extern) dans tracker.hpp et DEFINIES ici (avec leurs
+// valeurs par defaut). Cela permet de compiler ce fichier dans la bibliotheque
+// libtracker.a et de la lier depuis plusieurs front-ends (run.cpp et tracker_gui.cpp).
+
+std::ofstream g_logfile;
+int progress{0};
+
+image_interpLinear IMAGE_INTERPOLATOR_LINEAR;
+image_interpCubic IMAGE_INTERPOLATOR_CUBIC;
+image_interpQuintic IMAGE_INTERPOLATOR_QUINTIC;
+image_interpolator *IMAGE_INTERPOLATOR{&IMAGE_INTERPOLATOR_CUBIC};
+
+std::string procedure{"particle_tracking"}; // the default procedure is to track particles
+
+int fake_undistor = 0;
+
+// Distortion parameters (grid method)
+std::string grid_image_name;
+int nx_grid_disto{0};
+int ny_grid_disto{0};
+
+// Distortion parameters (displacement method)
+std::vector<int> image_numbers_corrDisto;
+std::vector<double> imposed_displ_x_pix, imposed_displ_y_pix;
+std::vector<std::vector<double>> dx_corrDisto, dy_corrDisto, NCC_subpix_corrDisto;
+std::vector<double> disto_parameters(8);
+std::vector<double> disto_parameters_perturb(8);
+
+// These vectors are used for the correction of distortions
+std::vector<int> List_Grains_i;
+std::vector<int> List_Grains_j;
+double equiProj_dist_min{0.0};
+double equiProj_dist_max{1000.0};
+
+// subpixel positionning of rod centers
+std::vector<double> xbound, ybound;
+std::vector<double> center_parameters(3);
+std::vector<double> center_parameters_perturb(3);
+double subpix_center_dr0{10.0};
+double subpix_center_xstep{0.1};
+double subpix_center_ystep{0.1};
+double subpix_center_rstep{0.1};
+int subpix_center_threshold{10000};
+
+double targetRadiusPattern{-1.0};
+
+int halfPatternQual = 9;
+
+// Post-Process
+int post_undistor{1};
+int post_rescale{1};
+int post_sync{0};
+int post_rotation{1};
+char device_data_name[256];
+double radius_corners{1.0};
+double radius_fixedPoints{2.0};
+double scaling_distance{0.0};
+
+int ShowSolidMotionError{0};
+
+// Visualization
+float colorMin{0.7};
+float colorMax{1.0};
+int visu_autoscale{1};
+double visu_alpha{0.3};
+std::string visu_output{"NCC"};
+std::string visu_mode{"discrete"};
+int nx_grid_visu{0};
+int smoothDegreeF{1};
+int visu_draw_in_ref{0};
+
+// Minimization (Subpixel)
+double subpix_tol{1e-8};
+double initial_direction_dx{0.01};
+double initial_direction_dy{0.01};
+double initial_direction_dr{0.01};
+
+double subpix_displacement_max{3.0};
+double overflow_stiffness{0.0};
+
+// Core variables
+int RawImages{0};
+
+int DemosaicModel{0};
+int rescaleGrayLevels{0};
+
+std::vector<std::vector<std::vector<uint16_t>>> image; // image[0 or 1][dimx][dimy]
+
+std::vector<imageDATA> imageData(2); // imageData[0 or 1]
+char image_name[256];                // Image name in "printf" style. Example: "./quelquepart/toto%04d.tif"
+char dic_name[256];                  // DIC-file name in "printf" style. Example: "./quelquepart/dic_out_%d.txt"
+int iref{0}, ibeg{0}, iend{0}, iinc{0}, iraz{0}, idelta{0}; // Control of file numbers
+bool require_precomputations{true};                         // If true, remake the pre-computations
+int dimx{0}, dimy{0};                                       // Image sizes
+std::string pattern_command;
+std::string grain_positions_command;
+
+int im_index_ref{0}, im_index_current{1}; // Index of image origin and target in table image
+int wanted_num_threads{4};
+
+int num_neighbour_max{40};
+double neighbour_dist_pix{250.0}; // max distance between points to find neighbours
+int period_rebuild_neighbour_list{50};
+
+// Flags
+int verbose_level{0};
+int rescue_level{2}; // in range [0 2].
+int subpixel{1};
+int rotations{1};
+int use_neighbour_list{1};
+
+// Image generation for check
+int make_images{0};     // create images (1) or not (0)
+double image_size{0.2}; // in range [0 1] (DEPRECATED)
+int image_div{1};       // will replace image_size (TODO)
+int draw_angle{1};      //
+int draw_disp{1};       //
+int draw_rescued{1};    //
+
+std::vector<Grain> grain;
+int num_grains{0};
+
+std::vector<triangle> mesh;
+
+std::vector<int> to_be_rescued;
+int num_to_be_rescued{0};
+double NCC_min{0.7}; // The NCC-value above which a first rescue is mandatory
+
+std::vector<int> to_be_super_rescued;
+int num_to_be_super_rescued{0};
+double NCC_min_super{0.5}; // The NCC-value above which a super_rescue is mandatory
+
+search_zone_type search_zone;              // For non sub-pixel tracking
+search_zone_type search_zone_rescue;       // For points with bad mathing
+search_zone_type search_zone_super_rescue; // For points with very bad mathing
+
+int igrain_of_thread[MAX_NUMBER_THREADS];
+
+// =========================================================================================================================
+// INTERACTION WITH USER
+// =========================================================================================================================
+
+// Ceci est un exemple de header pour les fonctions:
+//
+// Une description brève et en fançais de ce que fait la fonction, 
+// éventuellement sur plusieurs lignes
+//
+// Les choses sur lesquelles il faut faire attention (si nécessaire)
+//
 void header() {
   // http://www.patorjk.com/software/taag
   // Lean
@@ -55,12 +222,11 @@ int init(int argc, char *argv[]) {
       exit(0);
     } else if (strcmp(argv[1], "-s") == 0 || strcmp(argv[1], "--sizes") == 0) {
       std::cout << std::endl;
-      std::cout << "unsigned char....." << sizeof(unsigned char) * 8 << " bits" << std::endl;
-      std::cout << "unsigned short...." << sizeof(unsigned short) * 8 << " bits" << std::endl;
-      std::cout << "unsigned int......" << sizeof(unsigned int) * 8 << " bits" << std::endl;
-      std::cout << "float............." << sizeof(float) * 8 << " bits" << std::endl;
-      std::cout << "double............" << sizeof(double) * 8 << " bits" << std::endl;
-      std::cout << "uint16_t.........." << sizeof(uint16_t) * 8 << " bits" << std::endl;
+      std::cout << "unsigned char......" << sizeof(unsigned char) * 8 << " bits" << std::endl;
+      std::cout << "unsigned short....." << sizeof(unsigned short) * 8 << " bits" << std::endl;
+      std::cout << "unsigned int......." << sizeof(unsigned int) * 8 << " bits" << std::endl;
+      std::cout << "float.............." << sizeof(float) * 8 << " bits" << std::endl;
+      std::cout << "double............." << sizeof(double) * 8 << " bits" << std::endl;
       std::cout << "uint16_t..........." << sizeof(uint16_t) * 8 << " bits" << std::endl;
       std::cout << std::endl;
       exit(0);
@@ -135,11 +301,11 @@ int init(int argc, char *argv[]) {
       dialog();
     } else {
       header();
-      read_data(argv[1]);
+      read_command_file(argv[1]);
     }
   } else { // tracker has been invocked by double-clics or without arguments
     header();
-    read_data("commands.txt");
+    read_command_file("commands.txt");
   }
 
   g_logfile.open("tracking.log");
@@ -161,16 +327,15 @@ int init(int argc, char *argv[]) {
 #endif
 
   TRACKER_LOG("Number of threads: " << wanted_num_threads << std::endl);
+  
+  
+  // plug les méthodes d'interpolation
+  IMAGE_INTERPOLATOR_LINEAR.image = &image;
+  IMAGE_INTERPOLATOR_CUBIC.image = &image;
+  IMAGE_INTERPOLATOR_QUINTIC.image = &image;
+  
 
   return 1;
-}
-
-double get_time() {
-#if defined(_OPENMP)
-  return omp_get_wtime();
-#else
-  return (double)std::clock() / (double)CLOCKS_PER_SEC;
-#endif
 }
 
 void dialog() {
@@ -318,245 +483,52 @@ void dialog() {
   exit(EXIT_SUCCESS);
 }
 
-/************************************************************************************************/
-/*  				 PARTICLE TRACKING                                                                  */
-/************************************************************************************************/
 
-// The particle tracking procedure (default procedure)
-void particle_tracking() {
-  read_image(im_index_ref, iref, true); // Read reference image
+// =========================================================================================================================
+// HELPERS
+// =========================================================================================================================
 
-  if (make_images) {
-    create_image(iref);
-  }
-
-  double tbeg;
-  int num_image;
-  int igrain;
-  int irescue;
-
-  if (use_neighbour_list) {
-    TRACKER_LOG("Build neighbour list ... " << std::flush);
-    tbeg = get_time();
-    for (int igrain = 0; igrain < num_grains; igrain++) {
-      grain[igrain].neighbour.clear();
-      find_neighbours(igrain);
-    }
-    TRACKER_LOG("[DONE in " << get_time() - tbeg << " seconds]" << std::endl);
-  }
-
-  for (num_image = ibeg; num_image <= iend; num_image += iinc) {
-
-    fprintf(stdout, "\n____ Correlations from image %d towards image %d (%d/%d)\n", iref, num_image,
-            num_image - ibeg + 1, iend - ibeg + 1);
-    read_image(im_index_current, num_image);
-
-    // Re-build the neighbour list periodically
-    if (use_neighbour_list && num_image % period_rebuild_neighbour_list == 0) {
-      fprintf(stdout, "Rebuilding the neighbour list ... ");
-      fflush(stdout);
-      tbeg = get_time();
-      for (int igrain = 0; igrain < num_grains; igrain++) {
-        find_neighbours(igrain);
-      }
-
-      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
-    }
-
-    // Precomputations
-    if (require_precomputations) {
-      fprintf(stdout, "Precomputations ... ");
-      fflush(stdout);
-      tbeg = get_time();
-      do_precomputations();
-      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
-    }
-
-    // non sub-pixel correlation (with rotations).
-    // The very first attempts
-    num_to_be_rescued = num_to_be_super_rescued = 0;
-    fprintf(stdout, "Follow %d grains ... \n", num_grains);
-    fflush(stdout);
-
-    if (rescue_level >= 0) {
-      tbeg = get_time();
-
-      progress = 0;
-#pragma omp parallel for schedule(dynamic)
-      for (igrain = 0; igrain < num_grains; igrain++) {
-        grain[igrain].reset();  // reset les NCC
-        grain[igrain].backup(); // sauvegarde les dx, dy et drot
-        if (grain[igrain].masked) {
-          continue;
-        }
-        follow_pattern_pixel(igrain);
-#pragma omp critical
-        {
-          msg::loadbar(++progress, grain.size());
-        }
-      }
-
-      std::cerr << std::endl;
-
-      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
-    }
-
-    // According to a minimum value of NCC, a rescue is attempted
-    if (rescue_level >= 1) {
-      if (num_to_be_rescued > 0)
-        fprintf(stdout, "Try to rescue %d grains\n", num_to_be_rescued);
-
-      tbeg = get_time();
-
-      progress = 0;
-#pragma omp parallel for private(igrain) schedule(dynamic)
-      for (irescue = 0; irescue < num_to_be_rescued; irescue++) {
-        igrain = to_be_rescued[irescue];
-        follow_pattern_rescue_pixel(igrain);
-#pragma omp critical
-        {
-          msg::loadbar(++progress, num_to_be_rescued);
-        }
-      }
-      std::cerr << std::endl;
-
-      // Display
-      for (irescue = 0; irescue < num_to_be_rescued; irescue++) {
-        igrain = to_be_rescued[irescue];
-        fprintf(stdout, "\nGrain %6d \t NCC = %6.4f  ->  ", igrain, grain[igrain].NCC);
-        fprintf(stdout, "%6.4f \t diff = %6.4f \t ", grain[igrain].NCC_rescue,
-                grain[igrain].NCC_rescue - grain[igrain].NCC);
-        if (grain[igrain].NCC_rescue > NCC_min)
-          fprintf(stdout, "[\033[32mOK\033[0m]\n");
-        else
-          fprintf(stdout, "[\033[31mFAIL\033[0m]\n");
-      }
-
-      if (num_to_be_rescued > 0)
-        fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
-    }
-
-    // According to a minimum value of NCC, a last super_rescue is attempted
-    if (rescue_level >= 2) {
-      if (num_to_be_super_rescued > 0) {
-        fprintf(stdout, "Try to super_rescue %d grains\n", num_to_be_super_rescued);
-      }
-
-      tbeg = get_time();
-
-      progress = 0;
-#pragma omp parallel for private(igrain) schedule(dynamic)
-      for (irescue = 0; irescue < num_to_be_super_rescued; irescue++) {
-        igrain = to_be_super_rescued[irescue];
-        follow_pattern_super_rescue_pixel(igrain);
-#pragma omp critical
-        {
-          msg::loadbar(++progress, num_to_be_rescued);
-        }
-      }
-      std::cerr << std::endl;
-
-      // Display
-      for (irescue = 0; irescue < num_to_be_super_rescued; irescue++) {
-        igrain = to_be_super_rescued[irescue];
-        fprintf(stdout, "Grain %6d \t NCC = %6.4f  ->  ", igrain, grain[igrain].NCC);
-        fprintf(stdout, "%6.4f \t diff = %6.4f \t ", grain[igrain].NCC_rescue,
-                grain[igrain].NCC_rescue - grain[igrain].NCC);
-        if (grain[igrain].NCC_rescue > NCC_min_super) {
-          fprintf(stdout, "[\033[32mOK\033[0m]\n");
-        } else {
-          fprintf(stdout, "[\033[31mFAIL\033[0m]\n");
-          fprintf(stdout, " Please, fix the pb manually\n");
-        }
-      }
-
-      if (num_to_be_super_rescued > 0) {
-        fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
-      }
-    }
-
-    // Sub-pixel
-    if (subpixel) {
-      fprintf(stdout, "Sub-pixel resolution ... \n");
-      fflush(stdout);
-
-      tbeg = get_time();
-
-      progress = 0;
-#pragma omp parallel for schedule(dynamic)
-      for (igrain = 0; igrain < num_grains; igrain++) {
-        if (grain[igrain].masked) {
-          continue;
-        }
-        follow_pattern_subpixel_xyR(igrain);
-#pragma omp critical
-        {
-          msg::loadbar(++progress, num_grains);
-        }
-      }
-      std::cerr << std::endl;
-      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
-    }
-
-    for (igrain = 0; igrain < num_grains; igrain++) {
-      grain[igrain].upix = grain[igrain].dx - grain[igrain].dx_prev;
-      grain[igrain].vpix = grain[igrain].dy - grain[igrain].dy_prev;
-      grain[igrain].rot_inc = grain[igrain].drot - grain[igrain].drot_prev;
-    }
-
-    // Save
-    save_grains(num_image);
-
-    if (make_images)
-      create_image(num_image);
-
-    // Change reference (Not yet tested!!!)
-    if (num_image - iref >= iraz) { // equal in fact!
-      std::cout << std::endl;
-      std::cout << "########" << std::endl << std::endl;
-      std::cout << "Changing reference image from " << iref << " to " << num_image << std::endl << std::endl;
-      std::cout << "########" << std::endl;
-
-      int tmp = im_index_current;
-      im_index_current = im_index_ref;
-      im_index_ref = tmp; // Swap the first index for the array 'image'
-      double actual_pos;
-      for (igrain = 0; igrain < num_grains; igrain++) {
-        actual_pos = (double)(grain[igrain].refcoord_xpix) + grain[igrain].dx;
-        grain[igrain].refcoord_xpix = nearest(actual_pos);
-        grain[igrain].dx = actual_pos - grain[igrain].refcoord_xpix;
-
-        actual_pos = (double)(grain[igrain].refcoord_ypix) + grain[igrain].dy;
-        grain[igrain].refcoord_ypix = nearest(actual_pos);
-        grain[igrain].dy = actual_pos - grain[igrain].refcoord_ypix;
-
-        grain[igrain].refrot += grain[igrain].drot;
-        grain[igrain].drot = 0.0;
-      }
-      iref = num_image;
-      require_precomputations = true; // so that precomputations are updated
-    }
-  }
-
-  if (ShowSolidMotionError) {
-    double angle = 0.0, xc = 0.0, yc = 0.0, xtrans = grain[0].dx, ytrans = grain[0].dy;
-    double mean = 0.0, stddev = 0.0;
-    SolidMotionError(angle, xc, yc, xtrans, ytrans, mean, stddev);
-    std::cout << "@SolidMotionError, meanError = " << mean << ", stddevError = " << stddev << std::endl;
-    std::cout << "angle  = " << angle << std::endl;
-    std::cout << "xc     = " << xc << std::endl;
-    std::cout << "yc     = " << yc << std::endl;
-    std::cout << "xtrans = " << xtrans << std::endl;
-    std::cout << "ytrans = " << ytrans << std::endl;
-  }
+double get_time() {
+#if defined(_OPENMP)
+  return omp_get_wtime();
+#else
+  return (double)std::clock() / (double)CLOCKS_PER_SEC;
+#endif
 }
 
-// La nouvelle procédure discutée avec Gael pour que les corrélations rattée
-// soient refaites mais cette fois avec une aide (une solution approchée) donnée
-// par l'utiilsateur.
-void particle_tracking_human_assisted() {
-  // TODO !!!!!!!!!
+void moment(std::vector<double> &data, data_stat &stat) {
+  size_t n = data.size();
+
+  if (n <= 1)
+    std::cerr << "@moment, number of data too small (min = 2)\n";
+  double s = 0.0;
+  for (size_t j = 0; j < n; j++)
+    s += data[j];
+  stat.ave = s / (double)n;
+  stat.adev = stat.var = stat.skew = stat.curt = 0.0;
+  double ep = 0.0;
+  double p = 0.0;
+  for (size_t j = 0; j < n; j++) {
+    stat.adev += fabs(s = data[j] - stat.ave);
+    ep += s;
+    stat.var += (p = s * s);
+    stat.skew += (p *= s);
+    stat.curt += (p *= s);
+  }
+  stat.adev /= (double)n;
+  stat.var = (stat.var - ep * ep / (double)n) / (double)(n - 1);
+  stat.sdev = sqrt(stat.var);
+  if (stat.var != 0.0) {
+    stat.skew /= (double)(n * stat.var * stat.sdev);
+    stat.curt = stat.curt / (double)(n * stat.var * stat.var) - 3.0;
+  } else
+    std::cerr << "@moment, No skew/kurtosis when variance = 0 (in moment)\n";
 }
+
+
+// =========================================================================================================================
+// CORE DIC PIT
+// =========================================================================================================================
 
 void rotate_pixel_pattern(int igrain, int i, double c, double s, int *xpixel, int *ypixel) {
   // Attention y est oriente vers le bas, c'est pourquoi le sens trigo est inverse
@@ -566,7 +538,26 @@ void rotate_pixel_pattern(int igrain, int i, double c, double s, int *xpixel, in
   *ypixel = nearest(ypix);
 }
 
-// Pre-computation of mean0, C0C0 and interpolated_zone for each grain
+void find_neighbours(int igrain) {
+  double x_igrain, y_igrain;
+  double x_jgrain, y_jgrain;
+  double squared_dist_pix = neighbour_dist_pix * neighbour_dist_pix;
+  double dist2;
+
+  x_igrain = grain[igrain].refcoord_xpix + grain[igrain].dx;
+  y_igrain = grain[igrain].refcoord_ypix + grain[igrain].dy;
+
+  grain[igrain].num_neighbour = 0;
+  for (int jgrain = 0; jgrain < num_grains; jgrain++) {
+    x_jgrain = grain[jgrain].refcoord_xpix + grain[jgrain].dx;
+    y_jgrain = grain[jgrain].refcoord_ypix + grain[jgrain].dy;
+    dist2 = (x_jgrain - x_igrain) * (x_jgrain - x_igrain) + (y_jgrain - y_igrain) * (y_jgrain - y_igrain);
+    if (jgrain != igrain && dist2 <= squared_dist_pix) {
+      grain[igrain].neighbour.push_back(jgrain);
+    }
+  }
+}
+
 void do_precomputations() {
   double c0, s0;
   int xpixel0, ypixel0;
@@ -621,7 +612,6 @@ void do_precomputations() {
   require_precomputations = false;
 }
 
-// Based on Highest NCC
 void follow_pattern_pixel(int igrain) {
   int refcoordx = grain[igrain].refcoord_xpix;
   int refcoordy = grain[igrain].refcoord_ypix;
@@ -986,6 +976,43 @@ void follow_pattern_super_rescue_pixel(int igrain) {
   }
 }
 
+void follow_pattern_subpixel_xyR(int igrain) {
+  std::vector<double> X(3); // Vector that hold the parameters to be optimized
+  std::vector<double> DX(3);
+
+  // ___ Initial guess of the subpixel part of displacement and rotation
+  X[0] = X[1] = X[2] = 0.0;
+
+  // ___ Initial direction (to search minimum in powell method)
+  DX[0] = initial_direction_dx;
+  DX[1] = initial_direction_dy;
+  DX[2] = initial_direction_dr;
+
+  // ___ Preparation of the minimization
+#if defined(_OPENMP)
+  int thread_id = omp_get_thread_num();
+#else
+  int thread_id = 0;
+#endif
+
+  igrain_of_thread[thread_id] = igrain;
+
+  // ___ Minimization
+  Powell<double(std::vector<double> &)> powell(NCC_to_minimize_xyR, subpix_tol);
+  X = powell.minimize(X, DX);
+
+  // ___ Update
+  grain[igrain].NCC_subpix = 1.0 - powell.fret;
+
+  grain[igrain].upix += X[0];
+  grain[igrain].vpix += X[1];
+  grain[igrain].rot_inc += X[2];
+
+  grain[igrain].dx += X[0];
+  grain[igrain].dy += X[1];
+  grain[igrain].drot += X[2];
+}
+
 double NCC_to_minimize_xyR(std::vector<double> &X) {
 
 #if defined(_OPENMP)
@@ -1057,433 +1084,126 @@ double NCC_to_minimize_xyR(std::vector<double> &X) {
   return (1.0 - NCC) * W;
 }
 
-void follow_pattern_subpixel_xyR(int igrain) {
-  std::vector<double> X(3); // Vector that hold the parameters to be optimized
-  std::vector<double> DX(3);
+double Equiproj_Error_Computation(std::vector<double> &X) {
+  int igrain, jgrain;
+  double A1x, A1y, B1x, B1y;
+  double A2x, A2y, B2x, B2y;
+  double AAx, AAy, BBx, BBy, ABx, ABy;
+  double func = 0.0;
 
-  // ___ Initial guess of the subpixel part of displacement and rotation
-  X[0] = X[1] = X[2] = 0.0;
+  for (size_t i_image = 1; i_image < image_numbers_corrDisto.size(); i_image++) {
+    for (size_t il = 0; il < List_Grains_i.size(); il++) {
+      igrain = List_Grains_i[il];
+      jgrain = List_Grains_j[il];
+      if (NCC_subpix_corrDisto[i_image][igrain] < NCC_min || NCC_subpix_corrDisto[i_image][jgrain] < NCC_min)
+        continue;
 
-  // ___ Initial direction (to search minimum in powell method)
-  DX[0] = initial_direction_dx;
-  DX[1] = initial_direction_dy;
-  DX[2] = initial_direction_dr;
+      undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), A1x, A1y);
+      undistor(&X[0], (double)(grain[igrain].refcoord_xpix + dx_corrDisto[i_image][igrain]),
+               (double)(grain[igrain].refcoord_ypix + dy_corrDisto[i_image][igrain]), A2x, A2y);
+      undistor(&X[0], (double)(grain[jgrain].refcoord_xpix), (double)(grain[jgrain].refcoord_ypix), B1x, B1y);
+      undistor(&X[0], (double)(grain[jgrain].refcoord_xpix + dx_corrDisto[i_image][jgrain]),
+               (double)(grain[jgrain].refcoord_ypix + dy_corrDisto[i_image][jgrain]), B2x, B2y);
 
-  // ___ Preparation of the minimization
-#if defined(_OPENMP)
-  int thread_id = omp_get_thread_num();
-#else
-  int thread_id = 0;
-#endif
+      ABx = B1x - A1x;
+      ABy = B1y - A1y;
+      BBx = B2x - B1x;
+      BBy = B2y - B1y;
+      AAx = A2x - A1x;
+      AAy = A2y - A1y;
 
-  igrain_of_thread[thread_id] = igrain;
-
-  // ___ Minimization
-  Powell<double(std::vector<double> &)> powell(NCC_to_minimize_xyR, subpix_tol);
-  X = powell.minimize(X, DX);
-
-  // ___ Update
-  grain[igrain].NCC_subpix = 1.0 - powell.fret;
-
-  grain[igrain].upix += X[0];
-  grain[igrain].vpix += X[1];
-  grain[igrain].rot_inc += X[2];
-
-  grain[igrain].dx += X[0];
-  grain[igrain].dy += X[1];
-  grain[igrain].drot += X[2];
-}
-
-void find_neighbours(int igrain) {
-  double x_igrain, y_igrain;
-  double x_jgrain, y_jgrain;
-  double squared_dist_pix = neighbour_dist_pix * neighbour_dist_pix;
-  double dist2;
-
-  x_igrain = grain[igrain].refcoord_xpix + grain[igrain].dx;
-  y_igrain = grain[igrain].refcoord_ypix + grain[igrain].dy;
-
-  grain[igrain].num_neighbour = 0;
-  for (int jgrain = 0; jgrain < num_grains; jgrain++) {
-    x_jgrain = grain[jgrain].refcoord_xpix + grain[jgrain].dx;
-    y_jgrain = grain[jgrain].refcoord_ypix + grain[jgrain].dy;
-    dist2 = (x_jgrain - x_igrain) * (x_jgrain - x_igrain) + (y_jgrain - y_igrain) * (y_jgrain - y_igrain);
-    if (jgrain != igrain && dist2 <= squared_dist_pix) {
-      grain[igrain].neighbour.push_back(jgrain);
+      // version sum(err)
+      func += abs((ABx * (BBx - AAx)) + (ABy * (BBy - AAy)));
     }
   }
+  return func;
 }
 
-int read_gmsh(const char *name) {
-  std::ifstream meshFile(name);
-  if (!meshFile) {
-    fprintf(stderr, "Cannot open file %s\n", name);
-    exit(0);
-  }
+double disto_to_minimize_Equiproj(std::vector<double> &X) {
+  int igrain, jgrain;
+  double A1x, A1y, B1x, B1y;
+  double A2x, A2y, B2x, B2y;
+  double AAx, AAy, BBx, BBy, ABx, ABy;
+  double func = 0.0;
+  double val = 0.0;
 
-  std::string token;
-  char not_read[150];
-  meshFile >> token;
+  int nbval = 0;
+  for (size_t i_image = 1; i_image < image_numbers_corrDisto.size(); i_image++) {
+    for (size_t il = 0; il < List_Grains_i.size(); il++) {
+      igrain = List_Grains_i[il];
+      jgrain = List_Grains_j[il];
+      if (NCC_subpix_corrDisto[i_image][igrain] < NCC_min || NCC_subpix_corrDisto[i_image][jgrain] < NCC_min)
+        continue;
 
-  while (meshFile) {
-    if (token == "$Nodes") {
-      meshFile >> num_grains;
-      TRACKER_SHOW(num_grains);
+      nbval++;
 
-      if (!grain.empty())
-        grain.clear();
-      grain.resize(num_grains);
-      if (!to_be_rescued.empty())
-        to_be_rescued.clear();
-      to_be_rescued.resize(num_grains);
-      if (!to_be_super_rescued.empty())
-        to_be_super_rescued.clear();
-      to_be_super_rescued.resize(num_grains);
+      // undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), A1x, A1y);
+      A1x = (double)(grain[igrain].refcoord_xpix);
+      A1y = (double)(grain[igrain].refcoord_ypix);
+      undistor(&X[0], (double)(grain[igrain].refcoord_xpix + dx_corrDisto[i_image][igrain]),
+               (double)(grain[igrain].refcoord_ypix + dy_corrDisto[i_image][igrain]), A2x, A2y);
+      // undistor(&X[0], (double)(grain[jgrain].refcoord_xpix), (double)(grain[jgrain].refcoord_ypix), B1x, B1y);
+      B1x = (double)(grain[jgrain].refcoord_xpix);
+      B1y = (double)(grain[jgrain].refcoord_ypix);
+      undistor(&X[0], (double)(grain[jgrain].refcoord_xpix + dx_corrDisto[i_image][jgrain]),
+               (double)(grain[jgrain].refcoord_ypix + dy_corrDisto[i_image][jgrain]), B2x, B2y);
 
-      size_t num_node;
-      double radius_pix_real = 10.0;
-      double xpix_real, ypix_real, trash;
-      for (int i = 0; i < num_grains; i++) {
-        meshFile >> num_node >> xpix_real >> ypix_real >> trash;
-        grain[i].refrot = 0.0;
-        grain[i].radius_pix = radius_pix_real;
-        grain[i].refcoord_xpix = (int)floor(xpix_real);
-        grain[i].dx = grain[i].upix = xpix_real - floor(xpix_real);
-        grain[i].refcoord_ypix = (int)floor(ypix_real);
-        grain[i].dy = grain[i].vpix = ypix_real - floor(ypix_real);
-      }
-    }
+      ABx = B1x - A1x;
+      ABy = B1y - A1y;
+      double AB = sqrt(ABx * ABx + ABy * ABy);
+      ABx /= AB;
+      ABy /= AB;
 
-    if (token == "$Elements") {
-      mesh.clear();
-      size_t nbElements;
-      size_t num_element, element_type, nbTags;
-      triangle T;
-      size_t t = 0;
+      BBx = B2x - B1x;
+      BBy = B2y - B1y;
+      AAx = A2x - A1x;
+      AAy = A2y - A1y;
 
-      meshFile >> nbElements;
-      for (size_t e = 0; e < nbElements; ++e) {
-        meshFile >> num_element >> element_type;
-        // triangle
-        if (element_type != 2) {
-          meshFile.getline(not_read, 150);
-          continue;
-        }
+      // version sum(err)
 
-        meshFile >> nbTags;
-        // the third tag is the number of a mesh partition to which the element belongs
-        size_t tag;
-        for (size_t tg = 0; tg < nbTags; ++(tg)) {
-          meshFile >> tag;
-        }
-
-        meshFile >> T.i0 >> T.i1 >> T.i2;
-
-        // nodeId has 0-offset
-        // (0 in C/C++ corresponds to 1 in the file)
-        T.i0 -= 1;
-        T.i1 -= 1;
-        T.i2 -= 1;
-
-        mesh.push_back(T);
-        ++t;
-      }
-    }
-
-    if (token == "$EndElements")
-      break;
-
-    meshFile >> token;
-  }
-  return 1;
-}
-
-// Lecture des positions des grains "tracked"
-int read_grains(const char *name, bool restart) {
-  std::ifstream grain_file(name);
-  if (!grain_file) {
-    fprintf(stderr, "Cannot open file %s\n", name);
-    exit(0);
-  }
-
-  grain_file >> num_grains;
-  TRACKER_SHOW(num_grains);
-
-  if (!grain.empty())
-    grain.clear();
-  grain.resize(num_grains);
-  if (!to_be_rescued.empty())
-    to_be_rescued.clear();
-  to_be_rescued.resize(num_grains);
-  if (!to_be_super_rescued.empty())
-    to_be_super_rescued.clear();
-  to_be_super_rescued.resize(num_grains);
-
-  if (restart) { // File with the same format as 'dic_out_x.txt'
-    for (int i = 0; i < num_grains; i++) {
-      grain_file >> grain[i].refcoord_xpix >> grain[i].refcoord_ypix >> grain[i].refrot >> grain[i].radius_pix >>
-          grain[i].dx >> grain[i].dy >> grain[i].drot >> grain[i].upix >> grain[i].vpix >> grain[i].rot_inc >>
-          grain[i].NCC >> grain[i].NCC_rescue >> grain[i].NCC_subpix;
-    }
-  } else { // Format plus simple
-    double radius_pix_real;
-    double xpix_real, ypix_real;
-    for (int i = 0; i < num_grains; i++) {
-      grain_file >> xpix_real // 1
-          >> ypix_real        // 2
-          >> grain[i].refrot  // 3
-          >> radius_pix_real; // 4
-      grain[i].radius_pix = radius_pix_real;
-
-      // Attention, si les coordonnées sont des reels, grain.dx est alors non nul
-      // et cela ajoute un déplacement initial artificiel
-      grain[i].refcoord_xpix = (int)floor(xpix_real);
-      grain[i].dx = grain[i].upix = xpix_real - floor(xpix_real);
-      grain[i].refcoord_ypix = (int)floor(ypix_real);
-      grain[i].dy = grain[i].vpix = ypix_real - floor(ypix_real);
+      // on prend seulement la plus grande erreur en valeur absolue
+      val = (ABx * (BBx - AAx)) + (ABy * (BBy - AAy));
+      func += val * val;
+      // if (val > func) func = val;
     }
   }
-
-  return 1;
+  // return fabs(func);
+  return (func);
 }
 
-void make_grid(double xmin, double xmax, double ymin, double ymax, int nx, int ny, int aleaMax) {
-  int dx = (int)floor((xmax - xmin) / (double)(nx - 1));
-  int dy = (int)floor((ymax - ymin) / (double)(ny - 1));
-
-  // Allocation memoire pour grain et to_be_rescued
-  num_grains = nx * ny;
-  if (!grain.empty())
-    grain.clear();
-  grain.resize(num_grains);
-  if (!to_be_rescued.empty())
-    to_be_rescued.clear();
-  to_be_rescued.resize(num_grains);
-  if (!to_be_super_rescued.empty())
-    to_be_super_rescued.clear();
-  to_be_super_rescued.resize(num_grains);
-
-  std::cout << "Create grid with " << num_grains << " points" << std::endl;
-
-  int i = 0;
-  for (int iy = 0; iy < ny; iy++) {
-    for (int ix = 0; ix < nx; ix++) {
-      double angle = (double)rand() / (double)RAND_MAX * (2.0 * M_PI); // un angle entre 0 et 2 pi
-      double alea = (double)rand() / (double)RAND_MAX * aleaMax;
-      grain[i].refcoord_xpix = xmin + ix * dx + (int)nearest(alea * cos(angle));
-      grain[i].refcoord_ypix = ymin + iy * dy + (int)nearest(alea * sin(angle));
-      grain[i].refrot = 0.0;
-      grain[i].radius_pix = 2.0;
-      i++;
+double disto_to_minimize_grid(std::vector<double> &X) {
+  double sum = 0.0;
+  int n = 0;
+  double x0, y0, xu, yu;
+  int igrain;
+  for (int iy = 0; iy < ny_grid_disto; iy++) {
+    igrain = iy * nx_grid_disto;
+    undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), x0, y0);
+    for (int ix = 0; ix < nx_grid_disto; ix++) {
+      igrain = iy * nx_grid_disto + ix;
+      undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), xu, yu);
+      sum += (yu - y0) * (yu - y0);
+      n++;
     }
   }
-}
-
-void make_grid_circular(double x_center, double y_center, double radius, double angle_inc) {
-  int i = 0;
-  double Pi = 4.0 * atan(1.0);
-
-  // Allocation memoire pour grain et to_be_rescued
-  num_grains = (int)(2.0 * Pi / angle_inc + 1.0);
-  if (!grain.empty())
-    grain.clear();
-  grain.resize(num_grains);
-  if (!to_be_rescued.empty())
-    to_be_rescued.clear();
-  to_be_rescued.resize(num_grains);
-  if (!to_be_super_rescued.empty())
-    to_be_super_rescued.clear();
-  to_be_super_rescued.resize(num_grains);
-
-  for (double angle = 0; angle < 2.0 * Pi; angle += angle_inc) {
-    double x = x_center + radius * cos(angle);
-    double y = y_center + radius * sin(angle);
-    grain[i].refcoord_xpix = nearest(x);
-    grain[i].refcoord_ypix = nearest(y);
-    grain[i].refrot = 0.0;
-    grain[i].radius_pix = 1.0;
-    i++;
-  }
-}
-
-int save_grains(const char *name, int num, bool simpleVersion) {
-  std::ofstream grain_file_out(name);
-  if (!grain_file_out) {
-    fprintf(stderr, "Cannot open file %s\n", name);
-    exit(0);
-  }
-
-  if (simpleVersion) {
-    grain_file_out << grain.size() << std::endl;
-    for (size_t i = 0; i < grain.size(); i++) {
-      grain_file_out << grain[i].refcoord_xpix + grain[i].dx << ' ' << grain[i].refcoord_ypix + grain[i].dy << ' '
-                     << grain[i].refrot << ' ' << grain[i].radius_pix << '\n';
-    }
-  } else {
-    grain_file_out << num_grains << std::endl;
-    for (int i = 0; i < num_grains; i++) {
-      grain_file_out << std::scientific << std::setprecision(15) << std::setw(6) << std::left
-                     << grain[i].refcoord_xpix << ' '                               // 1
-                     << std::setw(6) << std::left << grain[i].refcoord_ypix << ' '  // 2
-                     << std::setw(23) << std::right << grain[i].refrot << ' '       // 3
-                     << std::setw(23) << std::right << grain[i].radius_pix << ' '   // 4
-                     << std::setw(23) << std::right << grain[i].dx << ' '           // 5
-                     << std::setw(23) << std::right << grain[i].dy << ' '           // 6
-                     << std::setw(23) << std::right << grain[i].drot << ' '         // 7
-                     << std::setw(23) << std::right << grain[i].upix << ' '         // 8
-                     << std::setw(23) << std::right << grain[i].vpix << ' '         // 9
-                     << std::setw(23) << std::right << grain[i].rot_inc << ' '      // 10
-                     << std::setw(23) << std::right << grain[i].NCC << ' '          // 11
-                     << std::setw(23) << std::right << grain[i].NCC_rescue << ' '   // 12
-                     << std::setw(23) << std::right << grain[i].NCC_subpix << '\n'; // 13
-    }
-
-    grain_file_out << std::endl;
-
-    char fname[256];
-    sprintf(fname, image_name, iref);
-    grain_file_out << "# from image: " << fname << " --dateTime: " << imageData[im_index_ref].dateTime; //<< "\n";
-    sprintf(fname, image_name, num);
-    grain_file_out << "#   to image: " << fname << " --dateTime: " << imageData[im_index_current].dateTime; //<< "\n";
-    // grain_file_out << fname << endl;
-  }
-
-  return 1;
-}
-
-int save_grains(int num) {
-  char name[256];
-  sprintf(name, "dic_out_%d.txt", num);
-
-  return save_grains(name, num);
-}
-
-void make_rect_pattern(int igrain, int half_width_pix, int half_height_pix) {
-  // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
-  int dim = (2 * half_width_pix + 1) * (2 * half_height_pix + 1);
-  grain[igrain].pattern.resize(dim);
-  grain[igrain].pattern0_rotated.resize(dim);
-  grain[igrain].pattern1_rotated.resize(dim);
-
-  int i = 0;
-  for (int dy = -half_height_pix; dy <= half_height_pix; ++dy) {
-    for (int dx = -half_width_pix; dx <= half_width_pix; ++dx) {
-      grain[igrain].pattern[i].dx = dx;
-      grain[igrain].pattern[i].dy = dy;
-      i++;
+  for (int ix = 0; ix < nx_grid_disto; ix++) {
+    undistor(&X[0], (double)(grain[ix].refcoord_xpix), (double)(grain[ix].refcoord_ypix), x0, y0);
+    for (int iy = 0; iy < ny_grid_disto; iy++) {
+      igrain = iy * nx_grid_disto + ix;
+      undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), xu, yu);
+      sum += (xu - x0) * (xu - x0);
+      n++;
     }
   }
+  return sum / (double)n;
 }
 
-void make_circ_pattern(int igrain, int radius_pix) {
-  // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
-  int dim = 4 * radius_pix * radius_pix; // surdim !
-  grain[igrain].pattern.resize(dim);
-  grain[igrain].pattern0_rotated.resize(dim);
-  grain[igrain].pattern1_rotated.resize(dim);
-  int i = 0;
-  double dst;
-  for (int dy = -radius_pix; dy <= radius_pix; ++dy) {
-    for (int dx = -radius_pix; dx <= radius_pix; ++dx) {
-      dst = sqrt((double)dx * (double)dx + (double)dy * (double)dy);
-      if (dst <= (double)radius_pix) {
-        grain[igrain].pattern[i].dx = dx;
-        grain[igrain].pattern[i].dy = dy;
-        i++;
-      }
-    }
-  }
 
-  grain[igrain].pattern.resize(i);
-  grain[igrain].pattern0_rotated.resize(i);
-  grain[igrain].pattern1_rotated.resize(i);
-}
+// =========================================================================================================================
+// READ-WRITE FILES
+// =========================================================================================================================
 
-void make_ring_pattern(int igrain, int radius_IN_pix, int radius_OUT_pix) {
-  // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
-  int dim = 4 * radius_OUT_pix * radius_OUT_pix; // surdim !
-  grain[igrain].pattern.resize(dim);
-  grain[igrain].pattern0_rotated.resize(dim);
-  grain[igrain].pattern1_rotated.resize(dim);
-
-  int i = 0;
-  double dst;
-  for (int dy = -radius_OUT_pix; dy <= radius_OUT_pix; ++dy) {
-    for (int dx = -radius_OUT_pix; dx <= radius_OUT_pix; ++dx) {
-      dst = sqrt((double)dx * (double)dx + (double)dy * (double)dy);
-      if (dst <= (double)radius_OUT_pix && dst >= (double)radius_IN_pix) {
-        grain[igrain].pattern[i].dx = dx;
-        grain[igrain].pattern[i].dy = dy;
-        i++;
-      }
-    }
-  }
-
-  grain[igrain].pattern.resize(i);
-  grain[igrain].pattern0_rotated.resize(i);
-  grain[igrain].pattern1_rotated.resize(i);
-}
-
-// Format:
-// number_of_patterns
-// for each pattern {
-// 	number_of_relative_coords
-// 	for each coord {
-//		xrel yrel
-// 	}
-// }
-void make_custom_pattern(const char *name) {
-  std::ifstream pattern_file(name);
-  if (!pattern_file) {
-    fprintf(stderr, "Cannot open file %s\n", name);
-    exit(0);
-  }
-
-  int num_patterns;
-  pattern_file >> num_patterns;
-  if (num_patterns != num_grains) {
-    fprintf(stderr, "The number of patterns is not equal to the number of grains!\n");
-    fprintf(stderr, "num_patterns : %d\n", num_patterns);
-    fprintf(stderr, "num_grains : %d\n", num_grains);
-    exit(0);
-  }
-  fprintf(stdout, "Number of patterns %d\n", num_patterns);
-
-  int num_coords = 0;
-  int dx, dy;
-  for (int igrain = 0; igrain < num_patterns; igrain++) {
-    pattern_file >> num_coords;
-    // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
-    grain[igrain].pattern.resize(num_coords);
-    grain[igrain].pattern0_rotated.resize(num_coords);
-    grain[igrain].pattern1_rotated.resize(num_coords);
-
-    // grain[igrain].num_point_pattern = num_coords;
-    for (int i = 0; i < num_coords; i++) {
-      pattern_file >> dx >> dy;
-      grain[igrain].pattern[i].dx = dx;
-      grain[igrain].pattern[i].dy = dy;
-    }
-  }
-}
-
-void set_solidTranslation(double u, double v) {
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    grain[igrain].dx = grain[igrain].upix = u;
-    grain[igrain].dy = grain[igrain].vpix = v;
-  }
-}
-
-void mask_rect(int xmin, int xmax, int ymin, int ymax) {
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    if (grain[igrain].refcoord_xpix >= xmin && grain[igrain].refcoord_xpix <= xmax &&
-        grain[igrain].refcoord_ypix >= ymin && grain[igrain].refcoord_ypix <= ymax)
-      grain[igrain].masked = true;
-  }
-}
-
-// This function reads the command file
-int read_data(const char *name) {
+int read_command_file(const char *name) {
   std::ifstream command_file(name);
   if (!command_file) {
     fprintf(stderr, "Cannot open file %s\n", name);
@@ -1865,7 +1585,6 @@ int read_data(const char *name) {
   return 1;
 }
 
-// This function writes the command file
 void write_data(const char *name) {
   std::ofstream command_file(name);
   if (!command_file) {
@@ -1963,13 +1682,6 @@ void write_data(const char *name) {
   command_file << "! END OF FILE";
 }
 
-// #include "image_io.cpp"
-
-// ====================================================================
-// _____ IMAGE MANAGEMENT _____
-// ====================================================================
-
-// Function that uses libtiff to read an image, and to compute and store gray levels in a c-style table.
 void read_image(int i, const char *name, bool first_time) {
   double tbeg = get_time();
   fprintf(stdout, "Read image named %s... \n", name);
@@ -2082,9 +1794,6 @@ void read_image(int i, const char *name, bool first_time) {
   fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
 }
 
-// This is the main function to read an image.
-// The image can be RAW or TIFF so that the library libraw or libtiff is used.
-// The image format is not recognized, but the user needs to set RawImage=1 to say that RAW format has to be used
 void read_image(int i, int num, bool first_time) {
   char name[256];
   sprintf(name, image_name, num);
@@ -2094,10 +1803,6 @@ void read_image(int i, int num, bool first_time) {
     read_image(i, name, first_time);
 }
 
-
-// il faut voir ici http://www.libraw.org/node/555 pour voir comment proceder
-// ici aussi :
-// http://stackoverflow.com/questions/22355491/libraw-is-making-my-images-too-bright-compared-to-nikons-own-converter
 void read_raw_image(int i, const char *name, bool first_time) {
 
   LibRaw iProcessor;
@@ -2281,26 +1986,191 @@ void read_raw_image(int i, const char *name, bool first_time) {
 
 }
 
-// This function has to be rewritten for a pgm (or tiff) output
-void undistor_image(const char * /*name_from*/, const char * /*name_to*/) {
-  read_image(im_index_ref, grid_image_name.c_str(), true);
+int read_grains(const char *name, bool restart) {
+  std::ifstream grain_file(name);
+  if (!grain_file) {
+    fprintf(stderr, "Cannot open file %s\n", name);
+    exit(0);
+  }
 
-  double xu, yu;
-  for (int y = 0; y < dimy; ++y) {
-    for (int x = 0; x < dimx; ++x) {
-      undistor(&disto_parameters[0], x, y, xu, yu);
-      xu = nearest(xu);
-      yu = nearest(yu);
-      if (xu < 0. || xu >= dimx || yu < 0. || yu >= dimy)
-        continue;
-      image[im_index_current][(int)xu][(int)yu] = image[im_index_ref][x][y];
+  grain_file >> num_grains;
+  TRACKER_SHOW(num_grains);
+
+  if (!grain.empty())
+    grain.clear();
+  grain.resize(num_grains);
+  if (!to_be_rescued.empty())
+    to_be_rescued.clear();
+  to_be_rescued.resize(num_grains);
+  if (!to_be_super_rescued.empty())
+    to_be_super_rescued.clear();
+  to_be_super_rescued.resize(num_grains);
+
+  if (restart) { // File with the same format as 'dic_out_x.txt'
+    for (int i = 0; i < num_grains; i++) {
+      grain_file >> grain[i].refcoord_xpix >> grain[i].refcoord_ypix >> grain[i].refrot >> grain[i].radius_pix >>
+          grain[i].dx >> grain[i].dy >> grain[i].drot >> grain[i].upix >> grain[i].vpix >> grain[i].rot_inc >>
+          grain[i].NCC >> grain[i].NCC_rescue >> grain[i].NCC_subpix;
+    }
+  } else { // Format plus simple
+    double radius_pix_real;
+    double xpix_real, ypix_real;
+    for (int i = 0; i < num_grains; i++) {
+      grain_file >> xpix_real // 1
+          >> ypix_real        // 2
+          >> grain[i].refrot  // 3
+          >> radius_pix_real; // 4
+      grain[i].radius_pix = radius_pix_real;
+
+      // Attention, si les coordonnées sont des reels, grain.dx est alors non nul
+      // et cela ajoute un déplacement initial artificiel
+      grain[i].refcoord_xpix = (int)floor(xpix_real);
+      grain[i].dx = grain[i].upix = xpix_real - floor(xpix_real);
+      grain[i].refcoord_ypix = (int)floor(ypix_real);
+      grain[i].dy = grain[i].vpix = ypix_real - floor(ypix_real);
     }
   }
 
-  create_image_Netbpm(0);
+  return 1;
 }
 
+int read_gmsh(const char *name) {
+  std::ifstream meshFile(name);
+  if (!meshFile) {
+    fprintf(stderr, "Cannot open file %s\n", name);
+    exit(0);
+  }
 
+  std::string token;
+  char not_read[150];
+  meshFile >> token;
+
+  while (meshFile) {
+    if (token == "$Nodes") {
+      meshFile >> num_grains;
+      TRACKER_SHOW(num_grains);
+
+      if (!grain.empty())
+        grain.clear();
+      grain.resize(num_grains);
+      if (!to_be_rescued.empty())
+        to_be_rescued.clear();
+      to_be_rescued.resize(num_grains);
+      if (!to_be_super_rescued.empty())
+        to_be_super_rescued.clear();
+      to_be_super_rescued.resize(num_grains);
+
+      size_t num_node;
+      double radius_pix_real = 10.0;
+      double xpix_real, ypix_real, trash;
+      for (int i = 0; i < num_grains; i++) {
+        meshFile >> num_node >> xpix_real >> ypix_real >> trash;
+        grain[i].refrot = 0.0;
+        grain[i].radius_pix = radius_pix_real;
+        grain[i].refcoord_xpix = (int)floor(xpix_real);
+        grain[i].dx = grain[i].upix = xpix_real - floor(xpix_real);
+        grain[i].refcoord_ypix = (int)floor(ypix_real);
+        grain[i].dy = grain[i].vpix = ypix_real - floor(ypix_real);
+      }
+    }
+
+    if (token == "$Elements") {
+      mesh.clear();
+      size_t nbElements;
+      size_t num_element, element_type, nbTags;
+      triangle T;
+      size_t t = 0;
+
+      meshFile >> nbElements;
+      for (size_t e = 0; e < nbElements; ++e) {
+        meshFile >> num_element >> element_type;
+        // triangle
+        if (element_type != 2) {
+          meshFile.getline(not_read, 150);
+          continue;
+        }
+
+        meshFile >> nbTags;
+        // the third tag is the number of a mesh partition to which the element belongs
+        size_t tag;
+        for (size_t tg = 0; tg < nbTags; ++(tg)) {
+          meshFile >> tag;
+        }
+
+        meshFile >> T.i0 >> T.i1 >> T.i2;
+
+        // nodeId has 0-offset
+        // (0 in C/C++ corresponds to 1 in the file)
+        T.i0 -= 1;
+        T.i1 -= 1;
+        T.i2 -= 1;
+
+        mesh.push_back(T);
+        ++t;
+      }
+    }
+
+    if (token == "$EndElements")
+      break;
+
+    meshFile >> token;
+  }
+  return 1;
+}
+
+int save_grains(int num) {
+  char name[256];
+  sprintf(name, "dic_out_%d.txt", num);
+
+  return save_grains(name, num);
+}
+
+int save_grains(const char *name, int num, bool simpleVersion) {
+  std::ofstream grain_file_out(name);
+  if (!grain_file_out) {
+    fprintf(stderr, "Cannot open file %s\n", name);
+    exit(0);
+  }
+
+  if (simpleVersion) {
+    grain_file_out << grain.size() << std::endl;
+    for (size_t i = 0; i < grain.size(); i++) {
+      grain_file_out << grain[i].refcoord_xpix + grain[i].dx << ' ' << grain[i].refcoord_ypix + grain[i].dy << ' '
+                     << grain[i].refrot << ' ' << grain[i].radius_pix << '\n';
+    }
+  } else {
+    grain_file_out << num_grains << std::endl;
+    for (int i = 0; i < num_grains; i++) {
+      grain_file_out << std::scientific << std::setprecision(15) << std::setw(6) << std::left
+                     << grain[i].refcoord_xpix << ' '                               // 1
+                     << std::setw(6) << std::left << grain[i].refcoord_ypix << ' '  // 2
+                     << std::setw(23) << std::right << grain[i].refrot << ' '       // 3
+                     << std::setw(23) << std::right << grain[i].radius_pix << ' '   // 4
+                     << std::setw(23) << std::right << grain[i].dx << ' '           // 5
+                     << std::setw(23) << std::right << grain[i].dy << ' '           // 6
+                     << std::setw(23) << std::right << grain[i].drot << ' '         // 7
+                     << std::setw(23) << std::right << grain[i].upix << ' '         // 8
+                     << std::setw(23) << std::right << grain[i].vpix << ' '         // 9
+                     << std::setw(23) << std::right << grain[i].rot_inc << ' '      // 10
+                     << std::setw(23) << std::right << grain[i].NCC << ' '          // 11
+                     << std::setw(23) << std::right << grain[i].NCC_rescue << ' '   // 12
+                     << std::setw(23) << std::right << grain[i].NCC_subpix << '\n'; // 13
+    }
+
+    grain_file_out << std::endl;
+
+    char fname[256];
+    sprintf(fname, image_name, iref);
+    grain_file_out << "# from image: " << fname << " --dateTime: " << imageData[im_index_ref].dateTime; //<< "\n";
+    sprintf(fname, image_name, num);
+    grain_file_out << "#   to image: " << fname << " --dateTime: " << imageData[im_index_current].dateTime; //<< "\n";
+    // grain_file_out << fname << endl;
+  }
+
+  return 1;
+}
+
+void create_image(int num) { create_image_Netbpm(num); }
 
 void draw_circle(std::vector<std::vector<uint16_t>> &imThumb, int x_centre, int y_centre, int radius, uint16_t col) {
   int x = 0, y = radius, m = 5 - 4 * radius;
@@ -2322,8 +2192,6 @@ void draw_circle(std::vector<std::vector<uint16_t>> &imThumb, int x_centre, int 
   }
 }
 
-// An alternative solution to make helper snapshots if Magick++ is not used
-// image_div is a global parameter that is use to divide the side sizes of the image
 void create_image_Netbpm(int num) {
   // Create an resized image
   int imW = dimx / image_div; // integer division
@@ -2445,14 +2313,184 @@ void create_image_Netbpm(int num) {
   std::cout << "done." << std::endl;
 }
 
-void create_image(int num) { create_image_Netbpm(num); }
 
-/************************************************************************************************/
-/*                                CORRECTION OF DISTORSION                                      */
-/************************************************************************************************/
+// =========================================================================================================================
+// PATTERNS
+// =========================================================================================================================
 
-// http://en.wikipedia.org/wiki/Distortion_(optics)
-// + pdf file named 'distortion' in the folder 'refs'
+void make_grid(double xmin, double xmax, double ymin, double ymax, int nx, int ny, int aleaMax) {
+  int dx = (int)floor((xmax - xmin) / (double)(nx - 1));
+  int dy = (int)floor((ymax - ymin) / (double)(ny - 1));
+
+  // Allocation memoire pour grain et to_be_rescued
+  num_grains = nx * ny;
+  if (!grain.empty())
+    grain.clear();
+  grain.resize(num_grains);
+  if (!to_be_rescued.empty())
+    to_be_rescued.clear();
+  to_be_rescued.resize(num_grains);
+  if (!to_be_super_rescued.empty())
+    to_be_super_rescued.clear();
+  to_be_super_rescued.resize(num_grains);
+
+  std::cout << "Create grid with " << num_grains << " points" << std::endl;
+
+  int i = 0;
+  for (int iy = 0; iy < ny; iy++) {
+    for (int ix = 0; ix < nx; ix++) {
+      double angle = (double)rand() / (double)RAND_MAX * (2.0 * M_PI); // un angle entre 0 et 2 pi
+      double alea = (double)rand() / (double)RAND_MAX * aleaMax;
+      grain[i].refcoord_xpix = xmin + ix * dx + (int)nearest(alea * cos(angle));
+      grain[i].refcoord_ypix = ymin + iy * dy + (int)nearest(alea * sin(angle));
+      grain[i].refrot = 0.0;
+      grain[i].radius_pix = 2.0;
+      i++;
+    }
+  }
+}
+
+void make_grid_circular(double x_center, double y_center, double radius, double angle_inc) {
+  int i = 0;
+  double Pi = 4.0 * atan(1.0);
+
+  // Allocation memoire pour grain et to_be_rescued
+  num_grains = (int)(2.0 * Pi / angle_inc + 1.0);
+  if (!grain.empty())
+    grain.clear();
+  grain.resize(num_grains);
+  if (!to_be_rescued.empty())
+    to_be_rescued.clear();
+  to_be_rescued.resize(num_grains);
+  if (!to_be_super_rescued.empty())
+    to_be_super_rescued.clear();
+  to_be_super_rescued.resize(num_grains);
+
+  for (double angle = 0; angle < 2.0 * Pi; angle += angle_inc) {
+    double x = x_center + radius * cos(angle);
+    double y = y_center + radius * sin(angle);
+    grain[i].refcoord_xpix = nearest(x);
+    grain[i].refcoord_ypix = nearest(y);
+    grain[i].refrot = 0.0;
+    grain[i].radius_pix = 1.0;
+    i++;
+  }
+}
+
+void make_circ_pattern(int igrain, int radius_pix) {
+  // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
+  int dim = 4 * radius_pix * radius_pix; // surdim !
+  grain[igrain].pattern.resize(dim);
+  grain[igrain].pattern0_rotated.resize(dim);
+  grain[igrain].pattern1_rotated.resize(dim);
+  int i = 0;
+  double dst;
+  for (int dy = -radius_pix; dy <= radius_pix; ++dy) {
+    for (int dx = -radius_pix; dx <= radius_pix; ++dx) {
+      dst = sqrt((double)dx * (double)dx + (double)dy * (double)dy);
+      if (dst <= (double)radius_pix) {
+        grain[igrain].pattern[i].dx = dx;
+        grain[igrain].pattern[i].dy = dy;
+        i++;
+      }
+    }
+  }
+
+  grain[igrain].pattern.resize(i);
+  grain[igrain].pattern0_rotated.resize(i);
+  grain[igrain].pattern1_rotated.resize(i);
+}
+
+void make_ring_pattern(int igrain, int radius_IN_pix, int radius_OUT_pix) {
+  // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
+  int dim = 4 * radius_OUT_pix * radius_OUT_pix; // surdim !
+  grain[igrain].pattern.resize(dim);
+  grain[igrain].pattern0_rotated.resize(dim);
+  grain[igrain].pattern1_rotated.resize(dim);
+
+  int i = 0;
+  double dst;
+  for (int dy = -radius_OUT_pix; dy <= radius_OUT_pix; ++dy) {
+    for (int dx = -radius_OUT_pix; dx <= radius_OUT_pix; ++dx) {
+      dst = sqrt((double)dx * (double)dx + (double)dy * (double)dy);
+      if (dst <= (double)radius_OUT_pix && dst >= (double)radius_IN_pix) {
+        grain[igrain].pattern[i].dx = dx;
+        grain[igrain].pattern[i].dy = dy;
+        i++;
+      }
+    }
+  }
+
+  grain[igrain].pattern.resize(i);
+  grain[igrain].pattern0_rotated.resize(i);
+  grain[igrain].pattern1_rotated.resize(i);
+}
+
+void make_rect_pattern(int igrain, int half_width_pix, int half_height_pix) {
+  // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
+  int dim = (2 * half_width_pix + 1) * (2 * half_height_pix + 1);
+  grain[igrain].pattern.resize(dim);
+  grain[igrain].pattern0_rotated.resize(dim);
+  grain[igrain].pattern1_rotated.resize(dim);
+
+  int i = 0;
+  for (int dy = -half_height_pix; dy <= half_height_pix; ++dy) {
+    for (int dx = -half_width_pix; dx <= half_width_pix; ++dx) {
+      grain[igrain].pattern[i].dx = dx;
+      grain[igrain].pattern[i].dy = dy;
+      i++;
+    }
+  }
+}
+
+void make_custom_pattern(const char *name) {
+  std::ifstream pattern_file(name);
+  if (!pattern_file) {
+    fprintf(stderr, "Cannot open file %s\n", name);
+    exit(0);
+  }
+
+  int num_patterns;
+  pattern_file >> num_patterns;
+  if (num_patterns != num_grains) {
+    fprintf(stderr, "The number of patterns is not equal to the number of grains!\n");
+    fprintf(stderr, "num_patterns : %d\n", num_patterns);
+    fprintf(stderr, "num_grains : %d\n", num_grains);
+    exit(0);
+  }
+  fprintf(stdout, "Number of patterns %d\n", num_patterns);
+
+  int num_coords = 0;
+  int dx, dy;
+  for (int igrain = 0; igrain < num_patterns; igrain++) {
+    pattern_file >> num_coords;
+    // Reserver memoire pour pattern, pattern0_rotation et pattern1_rotation
+    grain[igrain].pattern.resize(num_coords);
+    grain[igrain].pattern0_rotated.resize(num_coords);
+    grain[igrain].pattern1_rotated.resize(num_coords);
+
+    // grain[igrain].num_point_pattern = num_coords;
+    for (int i = 0; i < num_coords; i++) {
+      pattern_file >> dx >> dy;
+      grain[igrain].pattern[i].dx = dx;
+      grain[igrain].pattern[i].dy = dy;
+    }
+  }
+}
+
+void mask_rect(int xmin, int xmax, int ymin, int ymax) {
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    if (grain[igrain].refcoord_xpix >= xmin && grain[igrain].refcoord_xpix <= xmax &&
+        grain[igrain].refcoord_ypix >= ymin && grain[igrain].refcoord_ypix <= ymax)
+      grain[igrain].masked = true;
+  }
+}
+
+
+// =========================================================================================================================
+// DISTO
+// =========================================================================================================================
+
 void distor(double *X, const double xu, const double yu, double &xd, double &yd) {
   double Xc = X[0];
   double Yc = X[1];
@@ -2500,6 +2538,97 @@ void diff_distor(double *X, const double xu, const double yu, double &dxd_dxu, d
   dyd_dyu = (1.0 + K1 * r2 + K2 * r4 + K3 * r6) + 2.0 * dy * dy * (2.0 * K2 * r2 + K1 + 3 * K3 * r4) +
             (6.0 * P1 * dy + 2.0 * P2 * dx) * (1.0 + P3 * r2) +
             (P1 * (r2 + 2.0 * dy * dy) + 2.0 * P2 * dy * dx) * P3 * 2.0 * dy;
+}
+
+double SolidMotionError_to_minimize(std::vector<double> &X) {
+  double angle = X[0];
+  double xc = X[1];
+  double yc = X[2];
+  double xtrans = X[3];
+  double ytrans = X[4];
+
+  double c = cos(angle);
+  double s = sin(angle);
+
+  double Rxx = c;
+  double Rxy = s;
+  double Ryx = -s;
+  double Ryy = c;
+
+  double error = 0.0;
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    double deltax = (double)grain[igrain].refcoord_xpix - xc;
+    double deltay = (double)grain[igrain].refcoord_ypix - yc;
+    double xt = Rxx * deltax + Rxy * deltay + xtrans;
+    double yt = Ryx * deltax + Ryy * deltay + ytrans;
+
+    double dx = xt - (grain[igrain].refcoord_xpix + grain[igrain].dx);
+    double dy = yt - (grain[igrain].refcoord_ypix + grain[igrain].dy);
+    error += dx * dx + dy * dy;
+  }
+  return error /= (double)num_grains;
+}
+
+void SolidMotionError(double &angle, double &xc, double &yc, double &xtrans, double &ytrans, double &mean,
+                      double &stddev) {
+  std::vector<double> X(5);
+  X[0] = angle;
+  X[1] = xc;
+  X[2] = yc;
+  X[3] = xtrans;
+  X[4] = ytrans;
+
+  std::vector<double> dX(5);
+  dX[0] = 0.0; // 1.0e-6;
+  dX[1] = 0.0; // 1.0e-6;
+  dX[2] = 0.0; // 1.0e-6;
+  dX[3] = 1.0e-6;
+  dX[4] = 1.0e-6;
+
+  // Minimization
+  Powell<double(std::vector<double> &)> powell(SolidMotionError_to_minimize, 1e-8);
+  X = powell.minimize(X, dX);
+
+  angle = X[0];
+  xc = X[1];
+  yc = X[2];
+  xtrans = X[3];
+  ytrans = X[4];
+
+  // Calcul des indicateurs
+  double c = cos(angle);
+  double s = sin(angle);
+
+  double Rxx = c;
+  double Rxy = s;
+  double Ryx = -s;
+  double Ryy = c;
+
+  mean = 0.0;
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    double deltax = (double)grain[igrain].refcoord_xpix - xc;
+    double deltay = (double)grain[igrain].refcoord_ypix - yc;
+    double xt = Rxx * deltax + Rxy * deltay + xtrans;
+    double yt = Ryx * deltax + Ryy * deltay + ytrans;
+
+    double dx = xt - (grain[igrain].refcoord_xpix + grain[igrain].dx);
+    double dy = yt - (grain[igrain].refcoord_ypix + grain[igrain].dy);
+    mean += dx * dx + dy * dy;
+  }
+  mean /= (double)num_grains;
+
+  stddev = 0.0;
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    double deltax = (double)grain[igrain].refcoord_xpix - X[1];
+    double deltay = (double)grain[igrain].refcoord_ypix - X[2];
+    double xt = Rxx * deltax + Rxy * deltay + X[3];
+    double yt = Ryx * deltax + Ryy * deltay + X[4];
+
+    double dx = xt - (grain[igrain].refcoord_xpix + grain[igrain].dx);
+    double dy = yt - (grain[igrain].refcoord_ypix + grain[igrain].dy);
+    stddev += (dx * dx + dy * dy) - mean;
+  }
+  stddev /= (double)num_grains;
 }
 
 int undistor(double *X, const double xd, const double yd, double &xu, double &yu, int niterMax, double tol,
@@ -2551,8 +2680,24 @@ int undistor(double *X, const double xd, const double yd, double &xu, double &yu
   return nbiter;
 }
 
-// Cette fonction construit des pairs de points sur une grille
-// qui sont distant de plus de equiProj_dist_min et de moins de equiProj_dist_max
+void undistor_image(const char * /*name_from*/, const char * /*name_to*/) {
+  read_image(im_index_ref, grid_image_name.c_str(), true);
+
+  double xu, yu;
+  for (int y = 0; y < dimy; ++y) {
+    for (int x = 0; x < dimx; ++x) {
+      undistor(&disto_parameters[0], x, y, xu, yu);
+      xu = nearest(xu);
+      yu = nearest(yu);
+      if (xu < 0. || xu >= dimx || yu < 0. || yu >= dimy)
+        continue;
+      image[im_index_current][(int)xu][(int)yu] = image[im_index_ref][x][y];
+    }
+  }
+
+  create_image_Netbpm(0);
+}
+
 void precompute_paires() {
   List_Grains_i.clear();
   List_Grains_j.clear();
@@ -2576,98 +2721,292 @@ void precompute_paires() {
   std::cout << "Number of points for equiprojectivity computations: " << List_Grains_i.size() << '\n';
 }
 
-// La fonction a minimiser si on veut utiliser le critère d'équiprojectivité.
-// Pour il faut que les déplacements entre les image correspondent réellement à un mouvement
-// de solide rigide (déplacement d'une grande plaque).
-//
-// Remarque suite aux tests de Gael :
-// La minimisation de sum(|err|) se comporte mal! (solution très sensible aux perturbations de départ)
-// Il vaut mieux minimiser sum(err). Mais on préfère finalement minimiser max(|err|)
-double disto_to_minimize_Equiproj(std::vector<double> &X) {
-  int igrain, jgrain;
-  double A1x, A1y, B1x, B1y;
-  double A2x, A2y, B2x, B2y;
-  double AAx, AAy, BBx, BBy, ABx, ABy;
-  double func = 0.0;
-  double val = 0.0;
-
-  int nbval = 0;
-  for (size_t i_image = 1; i_image < image_numbers_corrDisto.size(); i_image++) {
-    for (size_t il = 0; il < List_Grains_i.size(); il++) {
-      igrain = List_Grains_i[il];
-      jgrain = List_Grains_j[il];
-      if (NCC_subpix_corrDisto[i_image][igrain] < NCC_min || NCC_subpix_corrDisto[i_image][jgrain] < NCC_min)
-        continue;
-
-      nbval++;
-
-      // undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), A1x, A1y);
-      A1x = (double)(grain[igrain].refcoord_xpix);
-      A1y = (double)(grain[igrain].refcoord_ypix);
-      undistor(&X[0], (double)(grain[igrain].refcoord_xpix + dx_corrDisto[i_image][igrain]),
-               (double)(grain[igrain].refcoord_ypix + dy_corrDisto[i_image][igrain]), A2x, A2y);
-      // undistor(&X[0], (double)(grain[jgrain].refcoord_xpix), (double)(grain[jgrain].refcoord_ypix), B1x, B1y);
-      B1x = (double)(grain[jgrain].refcoord_xpix);
-      B1y = (double)(grain[jgrain].refcoord_ypix);
-      undistor(&X[0], (double)(grain[jgrain].refcoord_xpix + dx_corrDisto[i_image][jgrain]),
-               (double)(grain[jgrain].refcoord_ypix + dy_corrDisto[i_image][jgrain]), B2x, B2y);
-
-      ABx = B1x - A1x;
-      ABy = B1y - A1y;
-      double AB = sqrt(ABx * ABx + ABy * ABy);
-      ABx /= AB;
-      ABy /= AB;
-
-      BBx = B2x - B1x;
-      BBy = B2y - B1y;
-      AAx = A2x - A1x;
-      AAy = A2y - A1y;
-
-      // version sum(err)
-
-      // on prend seulement la plus grande erreur en valeur absolue
-      val = (ABx * (BBx - AAx)) + (ABy * (BBy - AAy));
-      func += val * val;
-      // if (val > func) func = val;
-    }
+void setSolidSolutionFromRef(double DX, double DY, double DROT) {
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    grain[igrain].dx = DX;
+    grain[igrain].dy = DY;
+    grain[igrain].drot = DROT;
   }
-  // return fabs(func);
-  return (func);
 }
 
-double Equiproj_Error_Computation(std::vector<double> &X) {
-  int igrain, jgrain;
-  double A1x, A1y, B1x, B1y;
-  double A2x, A2y, B2x, B2y;
-  double AAx, AAy, BBx, BBy, ABx, ABy;
-  double func = 0.0;
+void set_solidTranslation(double u, double v) {
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    grain[igrain].dx = grain[igrain].upix = u;
+    grain[igrain].dy = grain[igrain].vpix = v;
+  }
+}
 
-  for (size_t i_image = 1; i_image < image_numbers_corrDisto.size(); i_image++) {
-    for (size_t il = 0; il < List_Grains_i.size(); il++) {
-      igrain = List_Grains_i[il];
-      jgrain = List_Grains_j[il];
-      if (NCC_subpix_corrDisto[i_image][igrain] < NCC_min || NCC_subpix_corrDisto[i_image][jgrain] < NCC_min)
-        continue;
 
-      undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), A1x, A1y);
-      undistor(&X[0], (double)(grain[igrain].refcoord_xpix + dx_corrDisto[i_image][igrain]),
-               (double)(grain[igrain].refcoord_ypix + dy_corrDisto[i_image][igrain]), A2x, A2y);
-      undistor(&X[0], (double)(grain[jgrain].refcoord_xpix), (double)(grain[jgrain].refcoord_ypix), B1x, B1y);
-      undistor(&X[0], (double)(grain[jgrain].refcoord_xpix + dx_corrDisto[i_image][jgrain]),
-               (double)(grain[jgrain].refcoord_ypix + dy_corrDisto[i_image][jgrain]), B2x, B2y);
+// =========================================================================================================================
+// PROCEDURES
+// =========================================================================================================================
 
-      ABx = B1x - A1x;
-      ABy = B1y - A1y;
-      BBx = B2x - B1x;
-      BBy = B2y - B1y;
-      AAx = A2x - A1x;
-      AAy = A2y - A1y;
+inline bool findQuadCoeff(double Xvalues[], double Yvalues[], double &a, double &b, double &c, int NumPoints) {
+  double S00 = NumPoints;
+  double S40 = 0.0, S10 = 0.0, S20 = 0.0, S30 = 0.0, S01 = 0.0, S11 = 0.0, S21 = 0.0;
+  double SqrX;
+  for (int i = 0; i < NumPoints; i++) {
+    SqrX = Xvalues[i] * Xvalues[i];
+    S40 += SqrX * SqrX;
+    S30 += SqrX * Xvalues[i];
+    S20 += SqrX;
+    S10 += Xvalues[i];
 
-      // version sum(err)
-      func += abs((ABx * (BBx - AAx)) + (ABy * (BBy - AAy)));
+    S01 += Yvalues[i];
+    S11 += Xvalues[i] * Yvalues[i];
+    S21 += SqrX * Yvalues[i];
+  }
+
+  double SqrS10 = S10 * S10;
+  double SqrS20 = S20 * S20;
+  double SqrS30 = S30 * S30;
+  double denom = S00 * S20 * S40 - SqrS10 * S40 - S00 * SqrS30 + 2 * S10 * S20 * S30 - S20 * S20 * S20;
+  if (denom == 0.0) {
+    a = b = c = 0.0;
+    return false;
+  }
+  double invDenom = 1.0 / denom;
+
+  a = (S01 * S10 * S30 - S11 * S00 * S30 - S01 * SqrS20 + S11 * S10 * S20 + S21 * S00 * S20 - S21 * SqrS10) *
+      invDenom;
+  b = (S11 * S00 * S40 - S01 * S10 * S40 + S01 * S20 * S30 - S21 * S00 * S30 - S11 * SqrS20 + S21 * S10 * S20) *
+      invDenom;
+  c = (S01 * S20 * S40 - S11 * S10 * S40 - S01 * SqrS30 + S11 * S20 * S30 + S21 * S10 * S30 - S21 * SqrS20) *
+      invDenom;
+
+  return true;
+}
+
+void particle_tracking() {
+  read_image(im_index_ref, iref, true); // Read reference image
+
+  if (make_images) {
+    create_image(iref);
+  }
+
+  double tbeg;
+  int num_image;
+  int igrain;
+  int irescue;
+
+  if (use_neighbour_list) {
+    TRACKER_LOG("Build neighbour list ... " << std::flush);
+    tbeg = get_time();
+    for (int igrain = 0; igrain < num_grains; igrain++) {
+      grain[igrain].neighbour.clear();
+      find_neighbours(igrain);
+    }
+    TRACKER_LOG("[DONE in " << get_time() - tbeg << " seconds]" << std::endl);
+  }
+
+  for (num_image = ibeg; num_image <= iend; num_image += iinc) {
+
+    fprintf(stdout, "\n____ Correlations from image %d towards image %d (%d/%d)\n", iref, num_image,
+            num_image - ibeg + 1, iend - ibeg + 1);
+    read_image(im_index_current, num_image);
+
+    // Re-build the neighbour list periodically
+    if (use_neighbour_list && num_image % period_rebuild_neighbour_list == 0) {
+      fprintf(stdout, "Rebuilding the neighbour list ... ");
+      fflush(stdout);
+      tbeg = get_time();
+      for (int igrain = 0; igrain < num_grains; igrain++) {
+        find_neighbours(igrain);
+      }
+
+      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
+    }
+
+    // Precomputations
+    if (require_precomputations) {
+      fprintf(stdout, "Precomputations ... ");
+      fflush(stdout);
+      tbeg = get_time();
+      do_precomputations();
+      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
+    }
+
+    // non sub-pixel correlation (with rotations).
+    // The very first attempts
+    num_to_be_rescued = num_to_be_super_rescued = 0;
+    fprintf(stdout, "Follow %d grains ... \n", num_grains);
+    fflush(stdout);
+
+    if (rescue_level >= 0) {
+      tbeg = get_time();
+
+      progress = 0;
+#pragma omp parallel for schedule(dynamic)
+      for (igrain = 0; igrain < num_grains; igrain++) {
+        grain[igrain].reset();  // reset les NCC
+        grain[igrain].backup(); // sauvegarde les dx, dy et drot
+        if (grain[igrain].masked) {
+          continue;
+        }
+        follow_pattern_pixel(igrain);
+#pragma omp critical
+        {
+          msg::loadbar(++progress, grain.size());
+        }
+      }
+
+      std::cerr << std::endl;
+
+      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
+    }
+
+    // According to a minimum value of NCC, a rescue is attempted
+    if (rescue_level >= 1) {
+      if (num_to_be_rescued > 0)
+        fprintf(stdout, "Try to rescue %d grains\n", num_to_be_rescued);
+
+      tbeg = get_time();
+
+      progress = 0;
+#pragma omp parallel for private(igrain) schedule(dynamic)
+      for (irescue = 0; irescue < num_to_be_rescued; irescue++) {
+        igrain = to_be_rescued[irescue];
+        follow_pattern_rescue_pixel(igrain);
+#pragma omp critical
+        {
+          msg::loadbar(++progress, num_to_be_rescued);
+        }
+      }
+      std::cerr << std::endl;
+
+      // Display
+      for (irescue = 0; irescue < num_to_be_rescued; irescue++) {
+        igrain = to_be_rescued[irescue];
+        fprintf(stdout, "\nGrain %6d \t NCC = %6.4f  ->  ", igrain, grain[igrain].NCC);
+        fprintf(stdout, "%6.4f \t diff = %6.4f \t ", grain[igrain].NCC_rescue,
+                grain[igrain].NCC_rescue - grain[igrain].NCC);
+        if (grain[igrain].NCC_rescue > NCC_min)
+          fprintf(stdout, "[\033[32mOK\033[0m]\n");
+        else
+          fprintf(stdout, "[\033[31mFAIL\033[0m]\n");
+      }
+
+      if (num_to_be_rescued > 0)
+        fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
+    }
+
+    // According to a minimum value of NCC, a last super_rescue is attempted
+    if (rescue_level >= 2) {
+      if (num_to_be_super_rescued > 0) {
+        fprintf(stdout, "Try to super_rescue %d grains\n", num_to_be_super_rescued);
+      }
+
+      tbeg = get_time();
+
+      progress = 0;
+#pragma omp parallel for private(igrain) schedule(dynamic)
+      for (irescue = 0; irescue < num_to_be_super_rescued; irescue++) {
+        igrain = to_be_super_rescued[irescue];
+        follow_pattern_super_rescue_pixel(igrain);
+#pragma omp critical
+        {
+          msg::loadbar(++progress, num_to_be_rescued);
+        }
+      }
+      std::cerr << std::endl;
+
+      // Display
+      for (irescue = 0; irescue < num_to_be_super_rescued; irescue++) {
+        igrain = to_be_super_rescued[irescue];
+        fprintf(stdout, "Grain %6d \t NCC = %6.4f  ->  ", igrain, grain[igrain].NCC);
+        fprintf(stdout, "%6.4f \t diff = %6.4f \t ", grain[igrain].NCC_rescue,
+                grain[igrain].NCC_rescue - grain[igrain].NCC);
+        if (grain[igrain].NCC_rescue > NCC_min_super) {
+          fprintf(stdout, "[\033[32mOK\033[0m]\n");
+        } else {
+          fprintf(stdout, "[\033[31mFAIL\033[0m]\n");
+          fprintf(stdout, " Please, fix the pb manually\n");
+        }
+      }
+
+      if (num_to_be_super_rescued > 0) {
+        fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
+      }
+    }
+
+    // Sub-pixel
+    if (subpixel) {
+      fprintf(stdout, "Sub-pixel resolution ... \n");
+      fflush(stdout);
+
+      tbeg = get_time();
+
+      progress = 0;
+#pragma omp parallel for schedule(dynamic)
+      for (igrain = 0; igrain < num_grains; igrain++) {
+        if (grain[igrain].masked) {
+          continue;
+        }
+        follow_pattern_subpixel_xyR(igrain);
+#pragma omp critical
+        {
+          msg::loadbar(++progress, num_grains);
+        }
+      }
+      std::cerr << std::endl;
+      fprintf(stdout, "[DONE in %f seconds]\n", get_time() - tbeg);
+    }
+
+    for (igrain = 0; igrain < num_grains; igrain++) {
+      grain[igrain].upix = grain[igrain].dx - grain[igrain].dx_prev;
+      grain[igrain].vpix = grain[igrain].dy - grain[igrain].dy_prev;
+      grain[igrain].rot_inc = grain[igrain].drot - grain[igrain].drot_prev;
+    }
+
+    // Save
+    save_grains(num_image);
+
+    if (make_images)
+      create_image(num_image);
+
+    // Change reference (Not yet tested!!!)
+    if (num_image - iref >= iraz) { // equal in fact!
+      std::cout << std::endl;
+      std::cout << "########" << std::endl << std::endl;
+      std::cout << "Changing reference image from " << iref << " to " << num_image << std::endl << std::endl;
+      std::cout << "########" << std::endl;
+
+      int tmp = im_index_current;
+      im_index_current = im_index_ref;
+      im_index_ref = tmp; // Swap the first index for the array 'image'
+      double actual_pos;
+      for (igrain = 0; igrain < num_grains; igrain++) {
+        actual_pos = (double)(grain[igrain].refcoord_xpix) + grain[igrain].dx;
+        grain[igrain].refcoord_xpix = nearest(actual_pos);
+        grain[igrain].dx = actual_pos - grain[igrain].refcoord_xpix;
+
+        actual_pos = (double)(grain[igrain].refcoord_ypix) + grain[igrain].dy;
+        grain[igrain].refcoord_ypix = nearest(actual_pos);
+        grain[igrain].dy = actual_pos - grain[igrain].refcoord_ypix;
+
+        grain[igrain].refrot += grain[igrain].drot;
+        grain[igrain].drot = 0.0;
+      }
+      iref = num_image;
+      require_precomputations = true; // so that precomputations are updated
     }
   }
-  return func;
+
+  if (ShowSolidMotionError) {
+    double angle = 0.0, xc = 0.0, yc = 0.0, xtrans = grain[0].dx, ytrans = grain[0].dy;
+    double mean = 0.0, stddev = 0.0;
+    SolidMotionError(angle, xc, yc, xtrans, ytrans, mean, stddev);
+    std::cout << "@SolidMotionError, meanError = " << mean << ", stddevError = " << stddev << std::endl;
+    std::cout << "angle  = " << angle << std::endl;
+    std::cout << "xc     = " << xc << std::endl;
+    std::cout << "yc     = " << yc << std::endl;
+    std::cout << "xtrans = " << xtrans << std::endl;
+    std::cout << "ytrans = " << ytrans << std::endl;
+  }
+}
+
+void particle_tracking_assisted_corrections() {
+  // TODO !!!!!!!!!
 }
 
 void correction_distortion() {
@@ -2972,170 +3311,118 @@ void correction_distortion_grid() {
   undistor_image(grid_image_name.c_str(), "undisto.png");
 }
 
-// To force horizontal lines to be horizontal, and vertical lines to be vertical
-double disto_to_minimize_grid(std::vector<double> &X) {
-  double sum = 0.0;
-  int n = 0;
-  double x0, y0, xu, yu;
-  int igrain;
-  for (int iy = 0; iy < ny_grid_disto; iy++) {
-    igrain = iy * nx_grid_disto;
-    undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), x0, y0);
-    for (int ix = 0; ix < nx_grid_disto; ix++) {
-      igrain = iy * nx_grid_disto + ix;
-      undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), xu, yu);
-      sum += (yu - y0) * (yu - y0);
-      n++;
+double center_to_minimize_Circ(std::vector<double> &X) {
+  double lx, ly, sum_dist = 0;
+
+  for (size_t i = 0; i < xbound.size(); i++) {
+    // undistor(&disto_parameters[0], xd, yd, xu, yu); // TODO...
+    lx = xbound[i] - X[0];
+    ly = ybound[i] - X[1];
+    sum_dist += fabs(sqrt(lx * lx + ly * ly) - X[2]);
+  }
+
+  return sum_dist;
+}
+
+void find_subpixel_centers() {
+  std::cout << "FIND SUBPIXEL CENTERS" << std::endl;
+  read_image(0, iref, true); // Read image
+
+  // 3 profiles to identify the threshold value of gray
+  std::ofstream prof("profile.txt");
+  int yline = (int)(dimy / 4);
+  for (int i = 0; i < dimx; i++) {
+    prof << i << " " << image[0][i][yline] << std::endl;
+  }
+  prof << std::endl;
+  yline = (int)(dimy / 2);
+  for (int i = 0; i < dimx; i++) {
+    prof << i << " " << image[0][i][yline] << std::endl;
+  }
+  prof << std::endl;
+  yline = (int)(3 * dimy / 4);
+  for (int i = 0; i < dimx; i++) {
+    prof << i << " " << image[0][i][yline] << std::endl;
+  }
+
+  double x, y;
+  double x0, y0;
+  double x1, y1;
+  double x2, y2;
+  double x3, y3;
+  double gray0, gray1, gray2, gray3;
+  double gray, previous_gray;
+
+  std::ofstream file("recentered.data");
+  std::ofstream logFile("recentered.log.data");
+  file << num_grains << std::endl << std::endl;
+  logFile << num_grains << std::endl << std::endl;
+  for (int igrain = 0; igrain < num_grains; igrain++) {
+    int px0 = grain[igrain].refcoord_xpix;
+    int py0 = grain[igrain].refcoord_ypix;
+    double r0 = grain[igrain].radius_pix;
+
+    center_parameters[0] = 0.0; // x offset
+    center_parameters[1] = 0.0; // y offset
+    center_parameters[2] = r0;  // radius
+
+    center_parameters_perturb[0] = subpix_center_xstep; // x offset
+    center_parameters_perturb[1] = subpix_center_ystep; // y offset
+    center_parameters_perturb[2] = subpix_center_rstep; // radius
+
+    double nx, ny;
+    double dr = 0.1;
+    xbound.clear();
+    ybound.clear();
+    for (double delta = 0; delta < 2 * M_PI; delta += M_PI / 180.) {
+      nx = cos(delta);
+      ny = sin(delta);
+      previous_gray = 0;
+      for (double r = r0 - subpix_center_dr0; r < r0 + subpix_center_dr0; r += dr) {
+        x = px0 + r * nx;
+        y = py0 + r * ny;
+        x0 = x3 = floor(x);
+        y0 = y1 = floor(y);
+        x1 = x2 = floor(x + 1.0);
+        y2 = y3 = floor(y + 1.0);
+        gray0 = image[0][(int)x0][(int)y0];
+        gray1 = image[0][(int)x1][(int)y1];
+        gray2 = image[0][(int)x2][(int)y2];
+        gray3 = image[0][(int)x3][(int)y3];
+        // http://en.wikipedia.org/wiki/Bilinear_interpolation
+        gray = gray2 * fabs(x - x0) * fabs(y - y0) + gray3 * fabs(x1 - x) * fabs(y - y1) +
+               gray0 * fabs(x2 - x) * fabs(y2 - y) + gray1 * fabs(x - x3) * fabs(y3 - y);
+        if (gray < subpix_center_threshold && previous_gray > subpix_center_threshold) {
+          double a = (gray - previous_gray) / dr;
+          double b = gray - a * r;
+          double rfit;
+          if (fabs(a) < 1e-6)
+            rfit = r - dr / 2;
+          else
+            rfit = (subpix_center_threshold - b) / a;
+          xbound.push_back(rfit * nx);
+          ybound.push_back(rfit * ny);
+          break;
+        }
+        previous_gray = gray;
+      }
     }
-  }
-  for (int ix = 0; ix < nx_grid_disto; ix++) {
-    undistor(&X[0], (double)(grain[ix].refcoord_xpix), (double)(grain[ix].refcoord_ypix), x0, y0);
-    for (int iy = 0; iy < ny_grid_disto; iy++) {
-      igrain = iy * nx_grid_disto + ix;
-      undistor(&X[0], (double)(grain[igrain].refcoord_xpix), (double)(grain[igrain].refcoord_ypix), xu, yu);
-      sum += (xu - x0) * (xu - x0);
-      n++;
-    }
-  }
-  return sum / (double)n;
+
+    Powell<double(std::vector<double> &)> powell(center_to_minimize_Circ, 1e-8);
+    center_parameters = powell.minimize(center_parameters, center_parameters_perturb);
+
+    std::cout << "grain number " << igrain << std::endl;
+    std::cout << "x offset = " << center_parameters[0] << std::endl;
+    std::cout << "y offset = " << center_parameters[1] << std::endl;
+    std::cout << "radius   = " << center_parameters[2] << std::endl;
+    std::cout << std::endl;
+
+    logFile << px0 << " " << py0 << " " << r0 << " " << center_parameters[0] << " " << center_parameters[1] << " "
+            << center_parameters[2] << std::endl;
+    file << px0 + center_parameters[0] << " " << py0 + center_parameters[1] << " " << grain[igrain].refrot << " "
+         << center_parameters[2] << std::endl;
+  } // for loop igrain
 }
-
-void setSolidSolutionFromRef(double DX, double DY, double DROT) {
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    grain[igrain].dx = DX;
-    grain[igrain].dy = DY;
-    grain[igrain].drot = DROT;
-  }
-}
-
-double SolidMotionError_to_minimize(std::vector<double> &X) {
-  double angle = X[0];
-  double xc = X[1];
-  double yc = X[2];
-  double xtrans = X[3];
-  double ytrans = X[4];
-
-  double c = cos(angle);
-  double s = sin(angle);
-
-  double Rxx = c;
-  double Rxy = s;
-  double Ryx = -s;
-  double Ryy = c;
-
-  double error = 0.0;
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    double deltax = (double)grain[igrain].refcoord_xpix - xc;
-    double deltay = (double)grain[igrain].refcoord_ypix - yc;
-    double xt = Rxx * deltax + Rxy * deltay + xtrans;
-    double yt = Ryx * deltax + Ryy * deltay + ytrans;
-
-    double dx = xt - (grain[igrain].refcoord_xpix + grain[igrain].dx);
-    double dy = yt - (grain[igrain].refcoord_ypix + grain[igrain].dy);
-    error += dx * dx + dy * dy;
-  }
-  return error /= (double)num_grains;
-}
-
-void SolidMotionError(double &angle, double &xc, double &yc, double &xtrans, double &ytrans, double &mean,
-                      double &stddev) {
-  std::vector<double> X(5);
-  X[0] = angle;
-  X[1] = xc;
-  X[2] = yc;
-  X[3] = xtrans;
-  X[4] = ytrans;
-
-  std::vector<double> dX(5);
-  dX[0] = 0.0; // 1.0e-6;
-  dX[1] = 0.0; // 1.0e-6;
-  dX[2] = 0.0; // 1.0e-6;
-  dX[3] = 1.0e-6;
-  dX[4] = 1.0e-6;
-
-  // Minimization
-  Powell<double(std::vector<double> &)> powell(SolidMotionError_to_minimize, 1e-8);
-  X = powell.minimize(X, dX);
-
-  angle = X[0];
-  xc = X[1];
-  yc = X[2];
-  xtrans = X[3];
-  ytrans = X[4];
-
-  // Calcul des indicateurs
-  double c = cos(angle);
-  double s = sin(angle);
-
-  double Rxx = c;
-  double Rxy = s;
-  double Ryx = -s;
-  double Ryy = c;
-
-  mean = 0.0;
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    double deltax = (double)grain[igrain].refcoord_xpix - xc;
-    double deltay = (double)grain[igrain].refcoord_ypix - yc;
-    double xt = Rxx * deltax + Rxy * deltay + xtrans;
-    double yt = Ryx * deltax + Ryy * deltay + ytrans;
-
-    double dx = xt - (grain[igrain].refcoord_xpix + grain[igrain].dx);
-    double dy = yt - (grain[igrain].refcoord_ypix + grain[igrain].dy);
-    mean += dx * dx + dy * dy;
-  }
-  mean /= (double)num_grains;
-
-  stddev = 0.0;
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    double deltax = (double)grain[igrain].refcoord_xpix - X[1];
-    double deltay = (double)grain[igrain].refcoord_ypix - X[2];
-    double xt = Rxx * deltax + Rxy * deltay + X[3];
-    double yt = Ryx * deltax + Ryy * deltay + X[4];
-
-    double dx = xt - (grain[igrain].refcoord_xpix + grain[igrain].dx);
-    double dy = yt - (grain[igrain].refcoord_ypix + grain[igrain].dy);
-    stddev += (dx * dx + dy * dy) - mean;
-  }
-  stddev /= (double)num_grains;
-}
-
-/************************************************************************************************/
-/*                                     GRAY LEVEL ANALYSIS                                      */
-/************************************************************************************************/
-
-//#include "moment.hpp"
-
-
-
-void moment(std::vector<double> &data, data_stat &stat) {
-  size_t n = data.size();
-
-  if (n <= 1)
-    std::cerr << "@moment, number of data too small (min = 2)\n";
-  double s = 0.0;
-  for (size_t j = 0; j < n; j++)
-    s += data[j];
-  stat.ave = s / (double)n;
-  stat.adev = stat.var = stat.skew = stat.curt = 0.0;
-  double ep = 0.0;
-  double p = 0.0;
-  for (size_t j = 0; j < n; j++) {
-    stat.adev += fabs(s = data[j] - stat.ave);
-    ep += s;
-    stat.var += (p = s * s);
-    stat.skew += (p *= s);
-    stat.curt += (p *= s);
-  }
-  stat.adev /= (double)n;
-  stat.var = (stat.var - ep * ep / (double)n) / (double)(n - 1);
-  stat.sdev = sqrt(stat.var);
-  if (stat.var != 0.0) {
-    stat.skew /= (double)(n * stat.var * stat.sdev);
-    stat.curt = stat.curt / (double)(n * stat.var * stat.var) - 3.0;
-  } else
-    std::cerr << "@moment, No skew/kurtosis when variance = 0 (in moment)\n";
-}
-
 
 void gray_level_analysis() {
   std::cout << "GRAY LEVEL ANALYSIS" << std::endl;
@@ -3185,10 +3472,6 @@ void gray_level_analysis() {
     }
   }
 }
-
-/************************************************************************************************/
-/*                     DETERMINATION OF PATTERN QUALITY FOR CORRELATIONS                        */
-/************************************************************************************************/
 
 double autocorrelation(int x0, int y0, double x1, double y1, int half) {
   double g0, g1;
@@ -3302,13 +3585,6 @@ void pattern_quality() {
   }
 }
 
-/************************************************************************************************/
-/*                                     POST PROCESSING                                          */
-/************************************************************************************************/
-
-// For post-processing specific to 1g2e see the fortran code in '1g2e_tools/postprocessDICfiles'
-// Otherwise, for more generic processings, these procedures can be used.
-
 struct sensor_data {
   double time; // seconds
 
@@ -3372,7 +3648,6 @@ void read_sensor_data(const char *name, process_data &data) {
   }
 }
 
-//
 void read(const char *name, process_data &data) {
   data.gr.clear();
   std::ifstream file(name);
@@ -3434,8 +3709,6 @@ void read(const char *name, process_data &data) {
   }
 }
 
-// This function save the configuration after being post-processed
-// in a file named CONFXXXX
 void save_conf(int num, process_data &data) {
   char name[256];
   sprintf(name, "CONF%04d", num);
@@ -3587,214 +3860,6 @@ void post_process() {
   } // for loop over files
 }
 
-/************************************************************************************************/
-/*                 DETERMINATION OF PARTICLE CENTERS WITH SUBPIXEL ACCURACY                     */
-/************************************************************************************************/
-
-double center_to_minimize_Circ(std::vector<double> &X) {
-  double lx, ly, sum_dist = 0;
-
-  for (size_t i = 0; i < xbound.size(); i++) {
-    // undistor(&disto_parameters[0], xd, yd, xu, yu); // TODO...
-    lx = xbound[i] - X[0];
-    ly = ybound[i] - X[1];
-    sum_dist += fabs(sqrt(lx * lx + ly * ly) - X[2]);
-  }
-
-  return sum_dist;
-}
-
-void find_subpixel_centers() {
-  std::cout << "FIND SUBPIXEL CENTERS" << std::endl;
-  read_image(0, iref, true); // Read image
-
-  // 3 profiles to identify the threshold value of gray
-  std::ofstream prof("profile.txt");
-  int yline = (int)(dimy / 4);
-  for (int i = 0; i < dimx; i++) {
-    prof << i << " " << image[0][i][yline] << std::endl;
-  }
-  prof << std::endl;
-  yline = (int)(dimy / 2);
-  for (int i = 0; i < dimx; i++) {
-    prof << i << " " << image[0][i][yline] << std::endl;
-  }
-  prof << std::endl;
-  yline = (int)(3 * dimy / 4);
-  for (int i = 0; i < dimx; i++) {
-    prof << i << " " << image[0][i][yline] << std::endl;
-  }
-
-  double x, y;
-  double x0, y0;
-  double x1, y1;
-  double x2, y2;
-  double x3, y3;
-  double gray0, gray1, gray2, gray3;
-  double gray, previous_gray;
-
-  std::ofstream file("recentered.data");
-  std::ofstream logFile("recentered.log.data");
-  file << num_grains << std::endl << std::endl;
-  logFile << num_grains << std::endl << std::endl;
-  for (int igrain = 0; igrain < num_grains; igrain++) {
-    int px0 = grain[igrain].refcoord_xpix;
-    int py0 = grain[igrain].refcoord_ypix;
-    double r0 = grain[igrain].radius_pix;
-
-    center_parameters[0] = 0.0; // x offset
-    center_parameters[1] = 0.0; // y offset
-    center_parameters[2] = r0;  // radius
-
-    center_parameters_perturb[0] = subpix_center_xstep; // x offset
-    center_parameters_perturb[1] = subpix_center_ystep; // y offset
-    center_parameters_perturb[2] = subpix_center_rstep; // radius
-
-    double nx, ny;
-    double dr = 0.1;
-    xbound.clear();
-    ybound.clear();
-    for (double delta = 0; delta < 2 * M_PI; delta += M_PI / 180.) {
-      nx = cos(delta);
-      ny = sin(delta);
-      previous_gray = 0;
-      for (double r = r0 - subpix_center_dr0; r < r0 + subpix_center_dr0; r += dr) {
-        x = px0 + r * nx;
-        y = py0 + r * ny;
-        x0 = x3 = floor(x);
-        y0 = y1 = floor(y);
-        x1 = x2 = floor(x + 1.0);
-        y2 = y3 = floor(y + 1.0);
-        gray0 = image[0][(int)x0][(int)y0];
-        gray1 = image[0][(int)x1][(int)y1];
-        gray2 = image[0][(int)x2][(int)y2];
-        gray3 = image[0][(int)x3][(int)y3];
-        // http://en.wikipedia.org/wiki/Bilinear_interpolation
-        gray = gray2 * fabs(x - x0) * fabs(y - y0) + gray3 * fabs(x1 - x) * fabs(y - y1) +
-               gray0 * fabs(x2 - x) * fabs(y2 - y) + gray1 * fabs(x - x3) * fabs(y3 - y);
-        if (gray < subpix_center_threshold && previous_gray > subpix_center_threshold) {
-          double a = (gray - previous_gray) / dr;
-          double b = gray - a * r;
-          double rfit;
-          if (fabs(a) < 1e-6)
-            rfit = r - dr / 2;
-          else
-            rfit = (subpix_center_threshold - b) / a;
-          xbound.push_back(rfit * nx);
-          ybound.push_back(rfit * ny);
-          break;
-        }
-        previous_gray = gray;
-      }
-    }
-
-    Powell<double(std::vector<double> &)> powell(center_to_minimize_Circ, 1e-8);
-    center_parameters = powell.minimize(center_parameters, center_parameters_perturb);
-
-    std::cout << "grain number " << igrain << std::endl;
-    std::cout << "x offset = " << center_parameters[0] << std::endl;
-    std::cout << "y offset = " << center_parameters[1] << std::endl;
-    std::cout << "radius   = " << center_parameters[2] << std::endl;
-    std::cout << std::endl;
-
-    logFile << px0 << " " << py0 << " " << r0 << " " << center_parameters[0] << " " << center_parameters[1] << " "
-            << center_parameters[2] << std::endl;
-    file << px0 + center_parameters[0] << " " << py0 + center_parameters[1] << " " << grain[igrain].refrot << " "
-         << center_parameters[2] << std::endl;
-  } // for loop igrain
-}
-
-/************************************************************************************************/
-/*                                SYNTHETIC IMAGE GENERATION                                    */
-/************************************************************************************************/
-
-// ref for Perlin noise: http://www.dreamincode.net/forums/topic/66480-perlin-noise/
-
-inline double findnoise2(double x, double y) {
-  int n = (int)x + (int)y * 57;
-  n = (n << 13) ^ n;
-  int nn = (n * (n * n * 60493 + 19990303) + 1376312589) & 0x7fffffff;
-  return 1.0 - ((double)nn / 1073741824.0);
-}
-
-// Cosine interpolation
-inline double interpolate(double a, double b, double x) {
-  double ft = x * 3.1415927;
-  double f = (1.0 - cos(ft)) * 0.5;
-  return a * (1.0 - f) + b * f;
-}
-
-double noise(double x, double y) {
-  double floorx = (double)((int)x); // This is kinda a cheap way to floor a double integer.
-  double floory = (double)((int)y);
-  double s, t, u, v; // Integer declaration
-  s = findnoise2(floorx, floory);
-  t = findnoise2(floorx + 1, floory);
-  u = findnoise2(floorx, floory + 1); // Get the surrounding pixels to calculate the transition.
-  v = findnoise2(floorx + 1, floory + 1);
-  double int1 = interpolate(s, t, x - floorx); // Interpolate between the values.
-  double int2 = interpolate(u, v, x - floorx); // Here we use x-floorx, to get 1st dimension. Don't mind the x-floorx
-                                               // thingie, it's part of the cosine formula.
-  return interpolate(int1, int2, y - floory);  // Here we use y-floory, to get the 2nd dimension.
-}
-
-// Transformation: first deformation, then rotation, and finally translation
-// w and h speak for themselves, zoom will zoom in and out on it (eg zoom = 75).
-// P stands for persistence, this controls the roughness of the picture (eg P = 0.5)
-void generate_synthetic_images(int w, int h, double zoom, int octaves, double p, double defx, double defy,
-                               double transx_pix, double transy_pix, double rot_deg) {
-  static int num_image_synth = 0;
-  thumbnail synth_im(w, h);
-
-  double rot_rad = rot_deg * (M_PI / 180.);
-  double c = cos(rot_rad);
-  double s = sin(rot_rad);
-  double xc = (double)w * 0.5;
-  double yc = (double)h * 0.5;
-
-  double dx, dy;
-
-  // Loop trough all the pixels
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-
-      double getnoise = 0;
-      for (int a = 0; a < octaves - 1; a++) {   // Loop trough the octaves.
-        double frequency = pow(2.0, (double)a); // Increases the frequency
-        double amplitude = pow(p, (double)a);   // Decreases the amplitude
-
-        dx = (double)x - xc;
-        dy = (double)y - yc;
-
-        double defdx = dx * 1.0 / (1.0 + defx);
-        double defdy = dy * 1.0 / (1.0 + defy);
-        double decalSecur = 5000.0; // noise n'aime pas les valeurs négatives
-        getnoise += noise((decalSecur - transx_pix + xc + (c * defdx - s * defdy)) * (frequency / zoom),
-                          (decalSecur - transy_pix + yc + (s * defdx + c * defdy)) * (frequency / zoom)) *
-                    amplitude;
-      }
-
-      if (getnoise < -1.0)
-        getnoise = -1.0;
-      else if (getnoise > 1.0)
-        getnoise = 1.0;
-
-      synth_im.imThumb[x][y] = UINT16_MAX * (getnoise * 0.5 + 0.5); // Between 0 and 1
-    }
-  }
-
-  char fname[256];
-  sprintf(fname, "synth_oct%d_p%.1f_z%.1f_%d.tif", octaves, (float)p, (float)zoom, num_image_synth++);
-  std::cout << "def = (" << defx << ", " << defy << "),"
-            << " trans = (" << transy_pix << ", " << transy_pix << "), rot = " << rot_deg << " deg. -> " << fname
-            << std::endl;
-  synth_im.writeTiff(fname, 0.0);
-}
-
-/************************************************************************************************/
-/*                                        VISU PROCESS                                          */
-/************************************************************************************************/
-
 struct triangle_def {
   int i0, i1, i2;
   double exx, eyy, exy;
@@ -3806,43 +3871,6 @@ struct point_def {
   double detJ;
   point_def() : exx(0.0), eyy(0.0), exy(0.0), detJ(0.0) {}
 };
-
-// explanation can be found here: http://mathforum.org/library/drmath/view/72047.html
-inline bool findQuadCoeff(double Xvalues[], double Yvalues[], double &a, double &b, double &c, int NumPoints) {
-  double S00 = NumPoints;
-  double S40 = 0.0, S10 = 0.0, S20 = 0.0, S30 = 0.0, S01 = 0.0, S11 = 0.0, S21 = 0.0;
-  double SqrX;
-  for (int i = 0; i < NumPoints; i++) {
-    SqrX = Xvalues[i] * Xvalues[i];
-    S40 += SqrX * SqrX;
-    S30 += SqrX * Xvalues[i];
-    S20 += SqrX;
-    S10 += Xvalues[i];
-
-    S01 += Yvalues[i];
-    S11 += Xvalues[i] * Yvalues[i];
-    S21 += SqrX * Yvalues[i];
-  }
-
-  double SqrS10 = S10 * S10;
-  double SqrS20 = S20 * S20;
-  double SqrS30 = S30 * S30;
-  double denom = S00 * S20 * S40 - SqrS10 * S40 - S00 * SqrS30 + 2 * S10 * S20 * S30 - S20 * S20 * S20;
-  if (denom == 0.0) {
-    a = b = c = 0.0;
-    return false;
-  }
-  double invDenom = 1.0 / denom;
-
-  a = (S01 * S10 * S30 - S11 * S00 * S30 - S01 * SqrS20 + S11 * S10 * S20 + S21 * S00 * S20 - S21 * SqrS10) *
-      invDenom;
-  b = (S11 * S00 * S40 - S01 * S10 * S40 + S01 * S20 * S30 - S21 * S00 * S30 - S11 * SqrS20 + S21 * S10 * S20) *
-      invDenom;
-  c = (S01 * S20 * S40 - S11 * S10 * S40 - S01 * SqrS30 + S11 * S20 * S30 + S21 * S10 * S30 - S21 * SqrS20) *
-      invDenom;
-
-  return true;
-}
 
 void visu_process() {
   std::cout << "VISU PROCESS" << std::endl;
@@ -4351,3 +4379,86 @@ void visu_process() {
     thumb.writeTiff(fname, visu_alpha);
   } // End loop over files (image and dic_out_x.txt)
 }
+
+
+// =========================================================================================================================
+// SYNTHETIC IMAGES
+// =========================================================================================================================
+
+inline double findnoise2(double x, double y) {
+  int n = (int)x + (int)y * 57;
+  n = (n << 13) ^ n;
+  int nn = (n * (n * n * 60493 + 19990303) + 1376312589) & 0x7fffffff;
+  return 1.0 - ((double)nn / 1073741824.0);
+}
+
+inline double interpolate(double a, double b, double x) {
+  double ft = x * 3.1415927;
+  double f = (1.0 - cos(ft)) * 0.5;
+  return a * (1.0 - f) + b * f;
+}
+
+double noise(double x, double y) {
+  double floorx = (double)((int)x); // This is kinda a cheap way to floor a double integer.
+  double floory = (double)((int)y);
+  double s, t, u, v; // Integer declaration
+  s = findnoise2(floorx, floory);
+  t = findnoise2(floorx + 1, floory);
+  u = findnoise2(floorx, floory + 1); // Get the surrounding pixels to calculate the transition.
+  v = findnoise2(floorx + 1, floory + 1);
+  double int1 = interpolate(s, t, x - floorx); // Interpolate between the values.
+  double int2 = interpolate(u, v, x - floorx); // Here we use x-floorx, to get 1st dimension. Don't mind the x-floorx
+                                               // thingie, it's part of the cosine formula.
+  return interpolate(int1, int2, y - floory);  // Here we use y-floory, to get the 2nd dimension.
+}
+
+void generate_synthetic_images(int w, int h, double zoom, int octaves, double p, double defx, double defy,
+                               double transx_pix, double transy_pix, double rot_deg) {
+  static int num_image_synth = 0;
+  thumbnail synth_im(w, h);
+
+  double rot_rad = rot_deg * (M_PI / 180.0);
+  double c = cos(rot_rad);
+  double s = sin(rot_rad);
+  double xc = (double)w * 0.5;
+  double yc = (double)h * 0.5;
+
+  double dx, dy;
+
+  // Loop trough all the pixels
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+
+      double getnoise = 0;
+      for (int a = 0; a < octaves - 1; a++) {   // Loop trough the octaves.
+        double frequency = pow(2.0, (double)a); // Increases the frequency
+        double amplitude = pow(p, (double)a);   // Decreases the amplitude
+
+        dx = (double)x - xc;
+        dy = (double)y - yc;
+
+        double defdx = dx * 1.0 / (1.0 + defx);
+        double defdy = dy * 1.0 / (1.0 + defy);
+        double decalSecur = 5000.0; // noise n'aime pas les valeurs négatives
+        getnoise += noise((decalSecur - transx_pix + xc + (c * defdx - s * defdy)) * (frequency / zoom),
+                          (decalSecur - transy_pix + yc + (s * defdx + c * defdy)) * (frequency / zoom)) *
+                    amplitude;
+      }
+
+      if (getnoise < -1.0)
+        getnoise = -1.0;
+      else if (getnoise > 1.0)
+        getnoise = 1.0;
+
+      synth_im.imThumb[x][y] = UINT16_MAX * (getnoise * 0.5 + 0.5); // Between 0 and 1
+    }
+  }
+
+  char fname[256];
+  sprintf(fname, "synth_oct%d_p%.1f_z%.1f_%d.tif", octaves, (float)p, (float)zoom, num_image_synth++);
+  std::cout << "def = (" << defx << ", " << defy << "),"
+            << " trans = (" << transy_pix << ", " << transy_pix << "), rot = " << rot_deg << " deg. -> " << fname
+            << std::endl;
+  synth_im.writeTiff(fname, 0.0);
+}
+

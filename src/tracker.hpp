@@ -1,3 +1,18 @@
+/*
+ * Tracker - Organisation du code
+ *
+ * Dans cette version, le code a été consolidé dans un seul fichier (tracker.cpp)
+ * pour simplifier le développement.
+ *
+ * Choix techniques :
+ * - Réduction du nombre de fichiers sources pour une maintenance plus aisée.
+ * - Conservation de l'existant éprouvé, même si cela va à l'encontre de certaines
+ *   "bonnes pratiques" de programmation.
+ *
+ * Compatibilité :
+ * - Le code est globalement écrit en C++17, mais des éléments de style C++ ancien subsistent.
+ */
+
 #pragma once
 
 #include <algorithm>
@@ -14,21 +29,17 @@
 #include <vector>
 
 #define MAX_NUMBER_THREADS 48
-#if defined(_OPENMP)
-#include <omp.h>
-#endif
 
-#include "libraw.h"
-#include <tiffio.h>
-
-#include "toofus/ColorTable.hpp"
-#include "toofus/delaunay2D.hpp"
-#include "toofus/message.hpp"
-#include "toofus/powell_nr3.hpp"
-
-#include "thumbnail.hpp"
-
+// interpol.hpp est header-only (methodes inline) et fournit les types des
+// interpolateurs utilises par les variables globales declarees plus bas. Il peut
+// donc etre inclus en toute securite par plusieurs unites de compilation.
 #include "interpol.hpp"
+
+// NOTE: Les includes "lourds" (libraw, tiffio, et les en-tetes toofus qui
+// definissent des fonctions non-inline au niveau namespace) sont volontairement
+// places dans tracker.cpp uniquement. Les inclure ici les ferait apparaitre dans
+// chaque unite incluant ce header (run.cpp, tracker_gui.cpp) -> symboles dupliques
+// a l'edition de liens avec libtracker.a.
 
 #define TRACKER_SHOW(V) std::cout << #V " = " << V << std::endl
 #define TRACKER_LOG(V)                                                                                               \
@@ -124,13 +135,13 @@ struct increasingHeight_order {
 
 // Research zone (for pixel-precision tracking)
 struct search_zone_type {
-  // Positive values
-  int left{1};            // Towards decreasing x
-  int right{1};           // Towards increasing x
-  int up{1};              // Towards decreasing y
-  int down{1};            // Towards increasing y
-  int num_rot{1};         // Number of tested angles (above and after, total = 2*num_rot+1)
-  double inc_rot{0.0001}; // Increment of rotation
+  // Be careful: they are positive values
+  int left{1};         // Towards decreasing x
+  int right{1};        // Towards increasing x
+  int up{1};           // Towards decreasing y
+  int down{1};         // Towards increasing y
+  int num_rot{1};      // Number of tested angles (above and after, total = 2*num_rot+1)
+  double inc_rot{1.0}; // Increment of rotation
 };
 
 struct data_stat {
@@ -146,29 +157,34 @@ struct data_stat {
 // GLOBAL VARIABLES
 // ================================================================================================================
 
-std::ofstream g_logfile;
-int progress{0};
+// NOTE: Ces variables globales sont seulement DECLAREES ici (extern) afin que ce
+// header puisse etre inclus par plusieurs unites de compilation (le CLI run.cpp et
+// l'application tracker_gui.cpp), toutes deux liees a libtracker.a. Les DEFINITIONS
+// (avec leurs valeurs par defaut) se trouvent dans tracker.cpp.
 
-image_interpLinear IMAGE_INTERPOLATOR_LINEAR;
-image_interpCubic IMAGE_INTERPOLATOR_CUBIC;
-image_interpQuintic IMAGE_INTERPOLATOR_QUINTIC;
-image_interpolator *IMAGE_INTERPOLATOR{&IMAGE_INTERPOLATOR_CUBIC};
+extern std::ofstream g_logfile;
+extern int progress;
 
-std::string procedure{"particle_tracking"}; // the default procedure is to track particles
+extern image_interpLinear IMAGE_INTERPOLATOR_LINEAR;
+extern image_interpCubic IMAGE_INTERPOLATOR_CUBIC;
+extern image_interpQuintic IMAGE_INTERPOLATOR_QUINTIC;
+extern image_interpolator *IMAGE_INTERPOLATOR;
 
-int fake_undistor = 0;
+extern std::string procedure; // the default procedure is to track particles
+
+extern int fake_undistor;
 
 // Distortion parameters (grid method)
-std::string grid_image_name;
-int nx_grid_disto{0};
-int ny_grid_disto{0};
+extern std::string grid_image_name;
+extern int nx_grid_disto;
+extern int ny_grid_disto;
 
 // Distortion parameters (displacement method)
-std::vector<int> image_numbers_corrDisto;
-std::vector<double> imposed_displ_x_pix, imposed_displ_y_pix;
-std::vector<std::vector<double>> dx_corrDisto, dy_corrDisto, NCC_subpix_corrDisto;
-std::vector<double> disto_parameters(8);
-std::vector<double> disto_parameters_perturb(8);
+extern std::vector<int> image_numbers_corrDisto;
+extern std::vector<double> imposed_displ_x_pix, imposed_displ_y_pix;
+extern std::vector<std::vector<double>> dx_corrDisto, dy_corrDisto, NCC_subpix_corrDisto;
+extern std::vector<double> disto_parameters;
+extern std::vector<double> disto_parameters_perturb;
 // 0 -> xc
 // 1 -> yc
 // 2 -> K1
@@ -179,123 +195,122 @@ std::vector<double> disto_parameters_perturb(8);
 // 7 -> P3
 
 // These vectors are used for the correction of distortions
-std::vector<int> List_Grains_i;
-std::vector<int> List_Grains_j;
-double equiProj_dist_min{0.0};
-double equiProj_dist_max{1000.0};
+extern std::vector<int> List_Grains_i;
+extern std::vector<int> List_Grains_j;
+extern double equiProj_dist_min;
+extern double equiProj_dist_max;
 
 // subpixel positionning of rod centers
-std::vector<double> xbound, ybound;
-std::vector<double> center_parameters(3);
-std::vector<double> center_parameters_perturb(3);
-double subpix_center_dr0{10.0};
-double subpix_center_xstep{0.1};
-double subpix_center_ystep{0.1};
-double subpix_center_rstep{0.1};
-int subpix_center_threshold{10000};
+extern std::vector<double> xbound, ybound;
+extern std::vector<double> center_parameters;
+extern std::vector<double> center_parameters_perturb;
+extern double subpix_center_dr0;
+extern double subpix_center_xstep;
+extern double subpix_center_ystep;
+extern double subpix_center_rstep;
+extern int subpix_center_threshold;
 
 // this allows to define special pattern according to a specified radius
 // A negative radius means "all the grains"
-double targetRadiusPattern{-1.0};
+extern double targetRadiusPattern;
 
 // Pattern quality
-int halfPatternQual = 9;
+extern int halfPatternQual;
 
 // Post-Process
-int post_undistor{1};
-int post_rescale{1};
-int post_sync{0};
-int post_rotation{1};
-char device_data_name[256];
-double radius_corners{1.0};
-double radius_fixedPoints{2.0};
-double scaling_distance{0.0};
+extern int post_undistor;
+extern int post_rescale;
+extern int post_sync;
+extern int post_rotation;
+extern char device_data_name[256];
+extern double radius_corners;
+extern double radius_fixedPoints;
+extern double scaling_distance;
 
-int ShowSolidMotionError{0};
+extern int ShowSolidMotionError;
 
 // Visualization
-float colorMin{0.7};
-float colorMax{1.0};
-int visu_autoscale{1};
-double visu_alpha{0.3};
-std::string visu_output{"NCC"};
-std::string visu_mode{"discrete"};
-int nx_grid_visu{0};
-int smoothDegreeF{1};
-int visu_draw_in_ref{0};
+extern float colorMin;
+extern float colorMax;
+extern int visu_autoscale;
+extern double visu_alpha;
+extern std::string visu_output;
+extern std::string visu_mode;
+extern int nx_grid_visu;
+extern int smoothDegreeF;
+extern int visu_draw_in_ref;
 
 // Minimization (Subpixel)
 
-double subpix_tol{1e-8};
-double initial_direction_dx{0.01};
-double initial_direction_dy{0.01};
-double initial_direction_dr{0.01};
+extern double subpix_tol;
+extern double initial_direction_dx;
+extern double initial_direction_dy;
+extern double initial_direction_dr;
 
-double subpix_displacement_max{3.0};
-double overflow_stiffness{0.0};
+extern double subpix_displacement_max;
+extern double overflow_stiffness;
 
 // Core variables
 
-int RawImages{0};
+extern int RawImages;
 
-int DemosaicModel{0};
-int rescaleGrayLevels{0};
+extern int DemosaicModel;
+extern int rescaleGrayLevels;
 
-std::vector<std::vector<std::vector<uint16_t>>> image; // image[0 or 1][dimx][dimy]
+extern std::vector<std::vector<std::vector<uint16_t>>> image; // image[0 or 1][dimx][dimy]
 
-std::vector<imageDATA> imageData(2); // imageData[0 or 1]
-char image_name[256];                // Image name in "printf" style. Example: "./quelquepart/toto%04d.tif"
-char dic_name[256];                  // DIC-file name in "printf" style. Example: "./quelquepart/dic_out_%d.txt"
-int iref{0}, ibeg{0}, iend{0}, iinc{0}, iraz{0}, idelta{0}; // Control of file numbers
-bool require_precomputations{true};                         // If true, remake the pre-computations
-int dimx{0}, dimy{0};                                       // Image sizes
-std::string pattern_command;
-std::string grain_positions_command;
+extern std::vector<imageDATA> imageData;                          // imageData[0 or 1]
+extern char image_name[256];                                      // Image name in "printf" style.
+extern char dic_name[256];                                        // DIC-file name in "printf" style.
+extern int iref, ibeg, iend, iinc, iraz, idelta;                  // Control of file numbers
+extern bool require_precomputations;                              // If true, remake the pre-computations
+extern int dimx, dimy;                                            // Image sizes
+extern std::string pattern_command;
+extern std::string grain_positions_command;
 
-int im_index_ref{0}, im_index_current{1}; // Index of image origin and target in table image
-int wanted_num_threads{4};
+extern int im_index_ref, im_index_current; // Index of image origin and target in table image
+extern int wanted_num_threads;
 
-int num_neighbour_max{40};
-double neighbour_dist_pix{250.0}; // max distance between points to find neighbours
-int period_rebuild_neighbour_list{50};
+extern int num_neighbour_max;
+extern double neighbour_dist_pix; // max distance between points to find neighbours
+extern int period_rebuild_neighbour_list;
 
 // Flags
-int verbose_level{0};
-int rescue_level{2}; // in range [0 2].
-                     // A negative value means no pixel-resolution tracking (go directly to subpixel optimization)
-int subpixel{1};
-int rotations{1};
-int use_neighbour_list{1};
+extern int verbose_level;
+extern int rescue_level; // in range [0 2].
+extern int subpixel;
+extern int rotations;
+extern int use_neighbour_list;
 
 // Image generation for check
-int make_images{0};     // create images (1) or not (0)
-double image_size{0.2}; // in range [0 1] (DEPRECATED)
-int image_div{1};       // will replace image_size (TODO)
-int draw_angle{1};      //
-int draw_disp{1};       //
-int draw_rescued{1};    //
+extern int make_images; // create images (1) or not (0)
+extern double image_size; // in range [0 1] (DEPRECATED)
+extern int image_div;   // will replace image_size (TODO)
+extern int draw_angle;  //
+extern int draw_disp;   //
+extern int draw_rescued; //
 
-std::vector<Grain> grain;
-int num_grains{0};
+extern std::vector<Grain> grain;
+extern int num_grains;
 
-std::vector<triangle> mesh;
+extern std::vector<triangle> mesh;
 
-std::vector<int> to_be_rescued;
-int num_to_be_rescued{0};
-double NCC_min{0.7}; // The NCC-value above which a first rescue is mandatory
+extern std::vector<int> to_be_rescued;
+extern int num_to_be_rescued;
+extern double NCC_min; // The NCC-value above which a first rescue is mandatory
 
-std::vector<int> to_be_super_rescued;
-int num_to_be_super_rescued{0};
-double NCC_min_super{0.5}; // The NCC-value above which a super_rescue is mandatory
+extern std::vector<int> to_be_super_rescued;
+extern int num_to_be_super_rescued;
+extern double NCC_min_super; // The NCC-value above which a super_rescue is mandatory
 
-search_zone_type search_zone;              // For non sub-pixel tracking
-search_zone_type search_zone_rescue;       // For points with bad mathing
-search_zone_type search_zone_super_rescue; // For points with very bad mathing
+extern search_zone_type search_zone;              // For non sub-pixel tracking
+extern search_zone_type search_zone_rescue;       // For points with bad mathing
+extern search_zone_type search_zone_super_rescue; // For points with very bad mathing
 
 // A table that hold the grain number being processed for each thread.
 // It is required in subpixel tracking.
 // Do not hesitate to increase the maximum number of threads if necessary
-int igrain_of_thread[MAX_NUMBER_THREADS];
+extern int igrain_of_thread[MAX_NUMBER_THREADS];
 
 // ================================================================================================================
 // Functions
@@ -312,6 +327,7 @@ inline int nearest(double x) { return (int)floor(x + 0.5); }
 inline int nearest(float x) { return (int)floor(x + 0.5); }
 inline double max(double a, double b) { return ((a > b) ? a : b); }
 inline double max(float a, float b) { return ((a > b) ? a : b); }
+void moment(std::vector<double> &data, data_stat &stat);
 
 // CORE DIC PIT ===================================================================================================
 void rotate_pixel_pattern(int igrain, int i, double c, double s, int *xpixel, int *ypixel);
@@ -327,7 +343,7 @@ double disto_to_minimize_Equiproj(std::vector<double> &);
 double disto_to_minimize_grid(std::vector<double> &);
 
 // READ-WRITE FILES ===============================================================================================
-int read_data(const char *name); // To read the command file
+int read_command_file(const char *name); // To read the command file
 void write_data(const char *name);
 void read_image(int i, const char *name, bool first_time);
 void read_image(int i, int num, bool = false);
@@ -340,7 +356,8 @@ void create_image(int num);
 void create_image_Netbpm(int num);
 
 // PATTERNS =======================================================================================================
-void make_grid(double xmin, double xmax, double ymin, double ymax, int nx, int ny);
+void make_grid(double xmin, double xmax, double ymin, double ymax, int nx, int ny, int aleaMax);
+void make_grid_circular(double x_center, double y_center, double radius, double angle_inc);
 void make_circ_pattern(int igrain, int radius_pix);
 void make_ring_pattern(int igrain, int radius_IN_pix, int radius_OUT_pic);
 void make_rect_pattern(int igrain, int half_width_pix, int half_height_pix);
@@ -361,12 +378,14 @@ void set_solidTranslation(double u, double v);
 
 // PROCEDURES =====================================================================================================
 void particle_tracking();
-void particle_tracking_human_assisted();
+void particle_tracking_assisted_corrections();
 void correction_distortion();
 void correction_distortion_grid();
 void find_subpixel_centers();
 void pattern_quality();
 void post_process();
+void visu_process();
+void gray_level_analysis();
 
 // SYNTHETIC IMAGES ===============================================================================================
 inline double findnoise2(double x, double y);
