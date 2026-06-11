@@ -58,6 +58,11 @@ static const Color COL_TEXT = {43, 47, 54, 255};          // texte principal
 static const Color COL_MUTED = {130, 137, 145, 255};      // texte secondaire
 static const Color COL_ACCENT = {45, 125, 210, 255};      // accent (titres de section)
 
+// Couleurs des trois positions d'un grain (vue + legende du panneau)
+static const Color COL_POS_REF = {120, 110, 205, 255};  // violet : position de reference
+static const Color COL_POS_PREV = {235, 150, 40, 255};  // orange : position precedente
+static const Color COL_POS_CUR = {40, 175, 95, 255};    // vert   : position actuelle
+
 static Font uiFont; // fonte d'interface (chargee au demarrage)
 
 // Texte avec la fonte d'interface
@@ -67,7 +72,7 @@ static void uiText(const char *s, float x, float y, float size, Color c) {
 
 // Applique un theme clair coherent a tous les widgets raygui
 static void applyCleanTheme() {
-  GuiSetStyle(DEFAULT, TEXT_SIZE, 18);
+  GuiSetStyle(DEFAULT, TEXT_SIZE, 16);
   GuiSetStyle(DEFAULT, TEXT_SPACING, 0);
   GuiSetStyle(DEFAULT, BORDER_WIDTH, 1);
   GuiSetStyle(DEFAULT, BACKGROUND_COLOR, 0xffffffff);
@@ -135,6 +140,8 @@ static float colNCCMin = 0.7f;       // borne basse de la table pour les champs 
 static float grainAlpha = 1.0f;      // transparence du remplissage des disques (0=transparent, 1=opaque)
 static int iSelected = -1;           // grain selectionne (clic) ; -1 = aucun
 static bool showGrains = true;       // false: disques remplaces par une croix de taille fixe
+static bool showTrajectory = false;  // afficher position ref + precedente (+ trace vers l'actuelle)
+static bool trajSelectedOnly = false;// limiter la trace au grain selectionne
 static bool showPattern = false;     // superposer le pattern correle sur chaque grain
 static bool showSearchZones = false; // afficher les zones de recherche du grain selectionne
 
@@ -561,6 +568,64 @@ static void drawColorBar(int viewW) {
   };
   rightLabel(TextFormat("%.3g", hi), by - 4);
   rightLabel(TextFormat("%.3g", lo), by + bh - 12);
+}
+
+// Positions ref / precedente / actuelle d'un grain :
+//   ref       = (refcoord_xpix, refcoord_ypix)
+//   actuelle  = ref + (dx, dy)
+//   precedente= actuelle - (upix, vpix)  [upix/vpix = increment du dernier pas DIC]
+static void grainPositions(const GuiGrain &g, Vector2 &ref, Vector2 &prev, Vector2 &cur) {
+  ref = {(float)g.refcoord_xpix, (float)g.refcoord_ypix};
+  cur = {(float)(g.refcoord_xpix + g.dx), (float)(g.refcoord_ypix + g.dy)};
+  prev = {(float)(cur.x - g.upix), (float)(cur.y - g.vpix)};
+}
+
+// Trace, pour tous les grains (ou seulement le selectionne), la position de reference
+// (violet) et la position precedente (orange) reliees a la position actuelle (vert).
+// Les marqueurs ont une taille constante a l'ecran. A dessiner dans BeginMode2D.
+static void drawTrajectories(float zoom) {
+  if (!showTrajectory)
+    return;
+  float r = (zoom > 0.0f) ? 4.0f / zoom : 4.0f;  // rayon des marqueurs (ecran)
+  float th = (zoom > 0.0f) ? 1.5f / zoom : 1.5f; // epaisseur des traits
+
+  float rotR = (zoom > 0.0f) ? 11.0f / zoom : 11.0f; // rayon de l'indicateur de rotation
+
+  for (size_t i = 0; i < g_grains.size(); ++i) {
+    if (trajSelectedOnly && (int)i != iSelected)
+      continue;
+    const GuiGrain &g = g_grains[i];
+    Vector2 ref, prev, cur;
+    grainPositions(g, ref, prev, cur);
+
+    // Trace ref -> precedente -> actuelle
+    DrawLineEx(ref, prev, th, Fade(COL_POS_REF, 0.6f));
+    DrawLineEx(prev, cur, th, COL_POS_PREV);
+
+    // Marqueurs ref (cercle violet) et precedente (cercle orange)
+    DrawCircleLinesV(ref, r, COL_POS_REF);
+    DrawCircleV(ref, r * 0.35f, COL_POS_REF);
+    DrawCircleLinesV(prev, r, COL_POS_PREV);
+
+    // ---- Position actuelle : indicateur de rotation ----
+    // Grand cercle + croix en X a l'orientation de reference (refrot, croix violette non
+    // tournee) et a l'orientation actuelle (refrot + drot, croix verte tournee) ; le
+    // secteur rempli entre les deux visualise l'angle de rotation (drot).
+    auto drawX = [&](float ang, float thick, Color col) {
+      for (int k = 0; k < 2; ++k) {
+        float a = ang + (float)(M_PI / 4.0) + k * (float)(M_PI / 2.0); // bras a 45 et 135
+        Vector2 d = {cosf(a) * rotR, sinf(a) * rotR};
+        DrawLineEx({cur.x - d.x, cur.y - d.y}, {cur.x + d.x, cur.y + d.y}, thick, col);
+      }
+    };
+    float a0 = (float)((g.refrot + M_PI / 4.0) * RAD2DEG);
+    float a1 = (float)((g.refrot + g.drot + M_PI / 4.0) * RAD2DEG);
+    DrawCircleSector(cur, rotR * 0.72f, fminf(a0, a1), fmaxf(a0, a1), 24, Fade(COL_POS_CUR, 0.30f));
+    DrawCircleLinesV(cur, rotR, COL_POS_CUR);
+    drawX(g.refrot, th, Fade(COL_POS_REF, 0.55f));    // croix non tournee (orientation ref)
+    drawX(g.refrot + g.drot, th * 1.3f, COL_POS_CUR); // croix tournee (orientation actuelle)
+    DrawCircleV(cur, th * 1.3f, COL_POS_CUR);         // centre precis
+  }
 }
 
 // Dessine le pattern (zone de pixels correlee) place sur chaque grain.
@@ -1035,6 +1100,8 @@ int main(int argc, char *argv[]) {
         showSearchZones = !showSearchZones;
       if (typed['g'])
         showGrains = !showGrains;
+      if (typed['r'])
+        showTrajectory = !showTrajectory;
       if (typed['t'])
         showTrk = true;
       if (typed['b']) {
@@ -1061,6 +1128,8 @@ int main(int argc, char *argv[]) {
       DrawTextureEx(bgTexture, {0, 0}, 0.0f, (float)bgLoadedDiv, WHITE);
     }
     drawGrains(cam.zoom);
+    if (showTrajectory)
+      drawTrajectories(cam.zoom);
     if (showPattern)
       drawPatterns();
     if (showSearchZones)
@@ -1092,25 +1161,25 @@ int main(int argc, char *argv[]) {
 
     const float px = (float)(viewW + 18);
     const float pw = (float)(PANEL_W - 36);
-    const float BTN_H = 26; // hauteur standard des boutons / toggles / combos
-    const float SLD_H = 14; // hauteur des sliders
-    const float LBL_H = 20; // avance apres une ligne de texte (label)
-    float y = 18;
+    const float BTN_H = 22; // hauteur standard des boutons / toggles / combos
+    const float SLD_H = 11; // hauteur des sliders
+    const float LBL_H = 17; // avance apres une ligne de texte (label)
+    float y = 16;
 
     // En-tete
-    uiText("D-TRACKER", px, y, 26, COL_TEXT);
-    uiText("GUI", px + MeasureTextEx(uiFont, "D-TRACKER ", 26, 0).x, y + 6, 16, COL_ACCENT);
-    y += 36;
+    uiText("D-TRACKER", px, y, 23, COL_TEXT);
+    uiText("GUI", px + MeasureTextEx(uiFont, "D-TRACKER ", 23, 0).x, y + 5, 15, COL_ACCENT);
+    y += 31;
     DrawLine((int)px, (int)y, (int)(px + pw), (int)y, COL_PANEL_EDGE);
-    y += 4;
+    y += 3;
 
     // Helper de section : titre accentue + filet separateur
     auto section = [&](const char *title) {
-      y += 10;
-      uiText(title, px, y, 14, COL_ACCENT);
-      y += 18;
-      DrawLine((int)px, (int)y, (int)(px + pw), (int)y, COL_PANEL_EDGE);
       y += 8;
+      uiText(title, px, y, 13, COL_ACCENT);
+      y += 15;
+      DrawLine((int)px, (int)y, (int)(px + pw), (int)y, COL_PANEL_EDGE);
+      y += 6;
     };
 
     // ---- Navigation ----
@@ -1119,10 +1188,10 @@ int main(int argc, char *argv[]) {
       gotoDIC(g_dicNum - (iinc != 0 ? iinc : 1));
     if (GuiButton(Rectangle{px + pw / 2 + 5, y, pw / 2 - 5, BTN_H}, "#119#  Next"))
       gotoDIC(g_dicNum + (iinc != 0 ? iinc : 1));
-    y += BTN_H + 6;
+    y += BTN_H + 4;
     if (GuiButton(Rectangle{px, y, pw, BTN_H}, "#106#  Fit view  (F)"))
       fitView(cam, sw, sh);
-    y += BTN_H + 6;
+    y += BTN_H + 4;
 
     // ---- Coloring ----
     section("COLORING");
@@ -1138,40 +1207,62 @@ int main(int argc, char *argv[]) {
       return s;
     }();
     const int FGPAD = 2; // = GROUP_PADDING force dans applyCleanTheme
-    const float FGH = 24;
+    const float FGH = 21;
     int fieldRows = (COLOR_FIELD_COUNT + 1) / 2;
     GuiToggleGroup(Rectangle{px, y, (pw - FGPAD) / 2, FGH}, fieldGrid.c_str(), &colorMode);
-    y += fieldRows * FGH + (fieldRows - 1) * FGPAD + 8;
+    y += fieldRows * FGH + (fieldRows - 1) * FGPAD + 6;
 
     // Borne(s) de la table de couleurs, selon le champ choisi.
     const ColorField &cf = COLOR_FIELDS[colorMode];
     if (cf.ncc) {
-      uiText(TextFormat("NCC min  %.2f", colNCCMin), px, y, 16, COL_MUTED);
+      uiText(TextFormat("NCC min  %.2f", colNCCMin), px, y, 14, COL_MUTED);
       y += LBL_H;
       GuiSliderBar(Rectangle{px, y, pw, SLD_H}, NULL, NULL, &colNCCMin, 0.0f, 0.975f);
       y += LBL_H;
     } else if (cf.member) {
       float lo, hi;
       colorRange(cf, lo, hi);
-      uiText(TextFormat("range  [%.3g, %.3g]  auto", lo, hi), px, y, 16, COL_MUTED);
+      uiText(TextFormat("range  [%.3g, %.3g]  auto", lo, hi), px, y, 14, COL_MUTED);
       y += LBL_H;
     }
     GuiToggle(Rectangle{px, y, pw, BTN_H}, showGrains ? "#44#  Hide grains  (G)" : "#44#  Show grains  (G)",
               &showGrains);
-    y += BTN_H + 6;
+    y += BTN_H + 4;
     if (showGrains) {
       // L'opacite ne concerne que le remplissage des disques (pas la croix).
-      uiText(TextFormat("Fill opacity  %.0f%%", grainAlpha * 100.0f), px, y, 16, COL_MUTED);
+      uiText(TextFormat("Fill opacity  %.0f%%", grainAlpha * 100.0f), px, y, 14, COL_MUTED);
       y += LBL_H;
       GuiSliderBar(Rectangle{px, y, pw, SLD_H}, NULL, NULL, &grainAlpha, 0.0f, 1.0f);
       y += LBL_H;
     }
     GuiToggle(Rectangle{px, y, pw, BTN_H}, showPattern ? "#97#  Hide pattern  (P)" : "#97#  Show pattern  (P)",
               &showPattern);
-    y += BTN_H + 6;
+    y += BTN_H + 4;
     GuiToggle(Rectangle{px, y, pw, BTN_H},
               showSearchZones ? "#98#  Hide search zones  (Z)" : "#98#  Show search zones  (Z)", &showSearchZones);
-    y += BTN_H + 6;
+    y += BTN_H + 4;
+
+    // ---- Positions (ref / precedente / actuelle) ----
+    section("POSITIONS");
+    GuiToggle(Rectangle{px, y, pw, BTN_H},
+              showTrajectory ? "#90#  Hide ref/prev  (R)" : "#90#  Show ref/prev  (R)", &showTrajectory);
+    y += BTN_H + 4;
+    if (!showTrajectory)
+      GuiSetState(STATE_DISABLED); // sous-option inactive tant que rien n'est affiche
+    GuiToggle(Rectangle{px, y, pw, BTN_H}, "Selected grain only", &trajSelectedOnly);
+    GuiSetState(STATE_NORMAL);
+    y += BTN_H + 4;
+    // Legende : pastille coloree + libelle pour chaque position
+    float lx = px;
+    auto legendDot = [&](Color col, const char *lab) {
+      DrawCircleV(Vector2{lx + 5, y + 8}, 5, col);
+      uiText(lab, lx + 14, y, 14, COL_MUTED);
+      lx += 14 + MeasureTextEx(uiFont, lab, 14, 0).x + 14;
+    };
+    legendDot(COL_POS_REF, "ref");
+    legendDot(COL_POS_PREV, "prev");
+    legendDot(COL_POS_CUR, "cur");
+    y += LBL_H;
 
     // ---- Background image ----
     section("BACKGROUND IMAGE");
@@ -1184,8 +1275,8 @@ int main(int argc, char *argv[]) {
       else
         unloadBackground();
     }
-    y += BTN_H + 6;
-    uiText(TextFormat("Resolution divider  %d", gui_image_div), px, y, 16, COL_MUTED);
+    y += BTN_H + 4;
+    uiText(TextFormat("Resolution divider  %d", gui_image_div), px, y, 14, COL_MUTED);
     y += LBL_H;
     float fdiv = (float)gui_image_div;
     GuiSliderBar(Rectangle{px, y, pw, SLD_H}, NULL, NULL, &fdiv, 1.0f, 32.0f);
@@ -1199,17 +1290,13 @@ int main(int argc, char *argv[]) {
 
     // ---- Computation ----
     section("COMPUTATION");
-    uiText(TextFormat("procedure: %s", procedure.c_str()), px, y, 15, COL_MUTED);
-    y += 22;
-    if (GuiButton(Rectangle{px, y, pw, 30}, TextFormat("#131#  %s", procedureLabel())))
+    uiText(TextFormat("procedure: %s", procedure.c_str()), px, y, 14, COL_MUTED);
+    y += 20;
+    if (GuiButton(Rectangle{px, y, pw, 26}, TextFormat("#131#  %s", procedureLabel())))
       runCorrelation();
-    y += 36;
+    y += 30;
     if (GuiButton(Rectangle{px, y, pw, BTN_H}, showTrk ? "#10#  Hide .trk  (T)" : "#10#  View .trk  (T)"))
       showTrk = !showTrk;
-
-    // Pied de panneau : aide raccourcis (deux lignes)
-    uiText("Left/Right navigate   F fit   B background   G grains", px, sh - 46, 13, COL_MUTED);
-    uiText("P pattern   Z zones   T .trk   ESC quit", px, sh - 26, 13, COL_MUTED);
 
     // Bandeau recapitulatif du dernier Run (temporaire)
     drawResultBanner(viewW, sh);
