@@ -50,13 +50,18 @@ $(APP): run.cpp $(LIB) Makefile
 # --- raylib/raygui GUI front-end ----------------------------------------------
 # raygui.h (single-header) declenche des -Wmissing-field-initializers : on les
 # neutralise uniquement pour cette cible.
-$(GUI): tracker_gui.cpp $(LIB) raygui.h guifont_ttf.h Makefile
+$(GUI): tracker_gui.cpp $(LIB) raygui.h rini.h guifont_ttf.h Makefile
 	$(CC) $(CC_OPT) -Wno-missing-field-initializers -Wno-enum-compare -Wno-unused-parameter -o $(GUI) tracker_gui.cpp $(LIB) $(CONFIG_RAYLIB) $(CONFIG_LIBRAW) $(CONFIG_LIBTIFF)
 
 # raygui is a single-header UI library for raylib. Fetch it if missing.
 raygui.h:
 	@echo "\033[0;32m-> Downloading raygui.h\033[0m"
 	curl -fsSL -o raygui.h https://raw.githubusercontent.com/raysan5/raygui/4.0/src/raygui.h
+
+# rini is a single-header INI config (read/write) library for raylib apps.
+rini.h:
+	@echo "\033[0;32m-> Downloading rini.h\033[0m"
+	curl -fsSL -o rini.h https://raw.githubusercontent.com/raysan5/rini/main/src/rini.h
 
 # Fonte d'interface (Open Sans, licence OFL) embarquee dans le binaire.
 # On telecharge le TTF puis on le transforme en tableau C avec 'xxd -i'.

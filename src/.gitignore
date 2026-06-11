@@ -6,9 +6,13 @@ libtracker.a
 
 # Dependances telechargees / generees par le Makefile
 raygui.h
+rini.h
 guifont.ttf
 guifont_ttf.h
 toofus/
+
+# Fichier de configuration genere par tracker-gui
+tracker-gui.ini
 
 # Divers macOS
 .DS_Store

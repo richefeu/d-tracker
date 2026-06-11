@@ -24,6 +24,10 @@
 #define RAYGUI_IMPLEMENTATION
 #include "raygui.h"
 
+// Lecture/ecriture de la configuration (fichier .ini), extension raylib de raysan5.
+#define RINI_IMPLEMENTATION
+#include "rini.h"
+
 // Coeur de tracker (declarations seulement ; le code est dans libtracker.a)
 #include "tracker.hpp"
 
@@ -65,6 +69,17 @@ static const Color COL_POS_CUR = {40, 175, 95, 255};    // vert   : position act
 
 static Font uiFont; // fonte d'interface (chargee au demarrage)
 
+// ---- Parametres persistants (fichier tracker-gui.ini, lus/ecrits via rini) -------
+// D'autres parametres persistes sont des globales declarees plus bas (gui_image_div,
+// colorMode, colNCCMin, grainAlpha, show* = affichages par defaut) ; voir load/saveConfig.
+static const char *CONFIG_FILE = "tracker-gui.ini";
+static int cfgWinW = 1280, cfgWinH = 800;            // dimensions de la fenetre
+static int cfgFontSize = 16;                         // taille de police des widgets
+static int cfgBtnH = 22, cfgSldH = 11, cfgLblH = 17; // hauteurs des widgets du panneau
+static float cfgMarkerR = 4.0f;                      // rayon de base des marqueurs (ecran)
+static float cfgRotR = 11.0f;                        // rayon de l'indicateur de rotation (ecran)
+static double cfgFallbackRadius = 10.0;              // rayon de grain par defaut (sans radius_pix)
+
 // Texte avec la fonte d'interface
 static void uiText(const char *s, float x, float y, float size, Color c) {
   DrawTextEx(uiFont, s, {x, y}, size, 0.0f, c);
@@ -72,7 +87,7 @@ static void uiText(const char *s, float x, float y, float size, Color c) {
 
 // Applique un theme clair coherent a tous les widgets raygui
 static void applyCleanTheme() {
-  GuiSetStyle(DEFAULT, TEXT_SIZE, 16);
+  GuiSetStyle(DEFAULT, TEXT_SIZE, cfgFontSize);
   GuiSetStyle(DEFAULT, TEXT_SPACING, 0);
   GuiSetStyle(DEFAULT, BORDER_WIDTH, 1);
   GuiSetStyle(DEFAULT, BACKGROUND_COLOR, 0xffffffff);
@@ -168,6 +183,58 @@ static const float PATTERN_FALLBACK_SIDE = 15.0f; // carre 15x15 si aucun patter
 static std::vector<std::string> g_resultLines;
 static double g_resultUntil = 0.0; // GetTime() jusqu'auquel afficher le bandeau
 
+// Charge les parametres depuis l'INI ; toute cle absente conserve la valeur par defaut.
+static void loadConfig() {
+  rini_data ini = rini_load(CONFIG_FILE); // alloue meme si le fichier n'existe pas
+  cfgWinW = rini_get_value_fallback(ini, "window_width", cfgWinW);
+  cfgWinH = rini_get_value_fallback(ini, "window_height", cfgWinH);
+  cfgFontSize = rini_get_value_fallback(ini, "widget_font_size", cfgFontSize);
+  cfgBtnH = rini_get_value_fallback(ini, "widget_button_height", cfgBtnH);
+  cfgSldH = rini_get_value_fallback(ini, "widget_slider_height", cfgSldH);
+  cfgLblH = rini_get_value_fallback(ini, "widget_label_height", cfgLblH);
+  cfgMarkerR = (float)rini_get_value_fallback(ini, "marker_radius", (int)cfgMarkerR);
+  cfgRotR = (float)rini_get_value_fallback(ini, "marker_rotation_radius", (int)cfgRotR);
+  cfgFallbackRadius = rini_get_value_fallback(ini, "marker_fallback_radius", (int)cfgFallbackRadius);
+  gui_image_div = rini_get_value_fallback(ini, "image_div", gui_image_div);
+  colorMode = rini_get_value_fallback(ini, "color_field", colorMode);
+  showGrains = rini_get_value_fallback(ini, "show_grains", showGrains) != 0;
+  showTrajectory = rini_get_value_fallback(ini, "show_positions", showTrajectory) != 0;
+  trajSelectedOnly = rini_get_value_fallback(ini, "positions_selected_only", trajSelectedOnly) != 0;
+  showPattern = rini_get_value_fallback(ini, "show_pattern", showPattern) != 0;
+  showSearchZones = rini_get_value_fallback(ini, "show_search_zones", showSearchZones) != 0;
+  showBackground = rini_get_value_fallback(ini, "show_background", showBackground) != 0;
+  colNCCMin = (float)atof(rini_get_value_text_fallback(ini, "ncc_min", TextFormat("%.3f", colNCCMin)));
+  grainAlpha = (float)atof(rini_get_value_text_fallback(ini, "fill_opacity", TextFormat("%.3f", grainAlpha)));
+  rini_unload(&ini);
+}
+
+// Enregistre les parametres courants dans l'INI (cree ou met a jour le fichier).
+static void saveConfig() {
+  rini_data ini = rini_load(CONFIG_FILE); // repart de l'existant : conserve l'ordre/les cles
+  rini_set_value(&ini, "window_width", cfgWinW, "Largeur de la fenetre (px)");
+  rini_set_value(&ini, "window_height", cfgWinH, "Hauteur de la fenetre (px)");
+  rini_set_value(&ini, "widget_font_size", cfgFontSize, "Taille de police des widgets");
+  rini_set_value(&ini, "widget_button_height", cfgBtnH, "Hauteur des boutons/toggles (px)");
+  rini_set_value(&ini, "widget_slider_height", cfgSldH, "Hauteur des sliders (px)");
+  rini_set_value(&ini, "widget_label_height", cfgLblH, "Pas vertical des lignes de texte (px)");
+  rini_set_value(&ini, "marker_radius", (int)cfgMarkerR, "Rayon de base des marqueurs (ecran)");
+  rini_set_value(&ini, "marker_rotation_radius", (int)cfgRotR, "Rayon de l'indicateur de rotation");
+  rini_set_value(&ini, "marker_fallback_radius", (int)cfgFallbackRadius, "Rayon de grain par defaut");
+  rini_set_value(&ini, "image_div", gui_image_div, "Sous-echantillonnage de l'image de fond");
+  rini_set_value(&ini, "color_field", colorMode, "Champ de coloration (index COLOR_FIELDS)");
+  rini_set_value(&ini, "show_grains", showGrains, "Afficher les disques (0/1)");
+  rini_set_value(&ini, "show_positions", showTrajectory, "Afficher ref/prec/actuelle (0/1)");
+  rini_set_value(&ini, "positions_selected_only", trajSelectedOnly, "Positions: grain selectionne seul (0/1)");
+  rini_set_value(&ini, "show_pattern", showPattern, "Afficher le pattern (0/1)");
+  rini_set_value(&ini, "show_search_zones", showSearchZones, "Afficher les zones de recherche (0/1)");
+  rini_set_value(&ini, "show_background", showBackground, "Afficher l'image de fond (0/1)");
+  rini_set_value_text(&ini, "ncc_min", TextFormat("%.3f", colNCCMin), "Borne basse NCC [0..1]");
+  rini_set_value_text(&ini, "fill_opacity", TextFormat("%.3f", grainAlpha), "Opacite du remplissage [0..1]");
+  rini_save(ini, CONFIG_FILE);
+  rini_unload(&ini);
+  TraceLog(LOG_INFO, "Settings saved to %s", CONFIG_FILE);
+}
+
 // ================================================================================
 // Rayon effectif d'un point (affichage et selection)
 // ================================================================================
@@ -198,7 +265,7 @@ static void computeFallbackRadius() {
   if (area > 0.0 && n > 0)
     g_fallbackRadius = 0.35 * std::sqrt(area / (double)n); // ~ fraction de l'espacement moyen
   else
-    g_fallbackRadius = 10.0;
+    g_fallbackRadius = cfgFallbackRadius;
 }
 
 // Rayon a utiliser pour le point i :
@@ -475,7 +542,7 @@ static void drawGrains(float zoom) {
   CT.Rebuild();
 
   // Demi-taille et epaisseur de la croix (mode "grains masques"), constantes a l'ecran.
-  float cross = (zoom > 0.0f) ? 5.0f / zoom : 5.0f;
+  float cross = (zoom > 0.0f) ? cfgMarkerR / zoom : cfgMarkerR;
   float crossTh = (zoom > 0.0f) ? 1.5f / zoom : 1.5f;
 
   for (size_t i = 0; i < g_grains.size(); ++i) {
@@ -586,10 +653,10 @@ static void grainPositions(const GuiGrain &g, Vector2 &ref, Vector2 &prev, Vecto
 static void drawTrajectories(float zoom) {
   if (!showTrajectory)
     return;
-  float r = (zoom > 0.0f) ? 4.0f / zoom : 4.0f;  // rayon des marqueurs (ecran)
-  float th = (zoom > 0.0f) ? 1.5f / zoom : 1.5f; // epaisseur des traits
+  float r = (zoom > 0.0f) ? cfgMarkerR / zoom : cfgMarkerR; // rayon des marqueurs (ecran)
+  float th = (zoom > 0.0f) ? 1.5f / zoom : 1.5f;            // epaisseur des traits
 
-  float rotR = (zoom > 0.0f) ? 11.0f / zoom : 11.0f; // rayon de l'indicateur de rotation
+  float rotR = (zoom > 0.0f) ? cfgRotR / zoom : cfgRotR; // rayon de l'indicateur de rotation
 
   for (size_t i = 0; i < g_grains.size(); ++i) {
     if (trajSelectedOnly && (int)i != iSelected)
@@ -1010,10 +1077,9 @@ int main(int argc, char *argv[]) {
     g_dicNum = (iref > 0) ? iref : 1; // numero d'image de reference (pour le fond)
   }
 
-  const int screenW = 1280;
-  const int screenH = 800;
+  loadConfig(); // parametres persistants (taille fenetre, cosmetique, affichages) avant InitWindow
   SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
-  InitWindow(screenW, screenH, "D-TRACKER GUI");
+  InitWindow(cfgWinW, cfgWinH, "D-TRACKER GUI");
   SetWindowMinSize(900, 600);
   SetExitKey(KEY_NULL); // Esc gere a la main : ferme l'overlay .trk s'il est ouvert, sinon quitte
   SetTargetFPS(60);
@@ -1161,9 +1227,9 @@ int main(int argc, char *argv[]) {
 
     const float px = (float)(viewW + 18);
     const float pw = (float)(PANEL_W - 36);
-    const float BTN_H = 22; // hauteur standard des boutons / toggles / combos
-    const float SLD_H = 11; // hauteur des sliders
-    const float LBL_H = 17; // avance apres une ligne de texte (label)
+    const float BTN_H = (float)cfgBtnH; // hauteur des boutons / toggles / combos (configurable)
+    const float SLD_H = (float)cfgSldH; // hauteur des sliders (configurable)
+    const float LBL_H = (float)cfgLblH; // avance apres une ligne de texte (configurable)
     float y = 16;
 
     // En-tete
@@ -1297,6 +1363,18 @@ int main(int argc, char *argv[]) {
     y += 30;
     if (GuiButton(Rectangle{px, y, pw, BTN_H}, showTrk ? "#10#  Hide .trk  (T)" : "#10#  View .trk  (T)"))
       showTrk = !showTrk;
+    y += BTN_H + 4;
+
+    // ---- Settings ----
+    section("SETTINGS");
+    if (GuiButton(Rectangle{px, y, pw, BTN_H}, "#2#  Save settings  (.ini)")) {
+      cfgWinW = sw; // capture la taille courante de la fenetre
+      cfgWinH = sh;
+      saveConfig();
+      g_resultLines = {TextFormat("Settings saved -> %s", CONFIG_FILE)};
+      g_resultUntil = GetTime() + 2.5;
+    }
+    y += BTN_H + 4;
 
     // Bandeau recapitulatif du dernier Run (temporaire)
     drawResultBanner(viewW, sh);
