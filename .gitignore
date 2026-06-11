@@ -1,0 +1,52 @@
+# ============================================================================
+#  d-tracker — .gitignore racine
+#  (les binaires/objets compiles dans src/ sont geres par src/.gitignore)
+# ============================================================================
+
+# ---- Donnees brutes (images RAW Phase One, volumineuses) ----
+**/*.IIQ
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+# forks de ressources / metadonnees AppleDouble
+._*
+# icone de dossier personnalisee ("Icon" suivi d'un retour chariot)
+Icon?
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+.VolumeIcon.icns
+
+# ---- Binaires / objets compiles (au cas ou hors src/) ----
+*.o
+*.a
+*.so
+*.dylib
+
+# ---- Artefacts de compilation LaTeX (doc/) ; les sources .tex/.cls sont suivies ----
+*.aux
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+
+# ---- Outils / editeurs ----
+# cache clangd
+.cache/
+# base d'indexation clangd (generee)
+compile_commands.json
+.vscode/
+.idea/
+*.swp
+*~
